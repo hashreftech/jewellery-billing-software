@@ -1,0 +1,162 @@
+CREATE TABLE purchase_orders
+(
+    total_amount numeric,
+    status character varying,
+    order_date date,
+    created_at timestamp without time zone,
+    customer_id integer,
+    id integer,
+    products jsonb,
+    order_number character varying,
+    updated_at timestamp without time zone,
+    overall_discount numeric
+);
+CREATE TABLE dealers
+(
+    categories ARRAY,
+    updated_at timestamp without time zone,
+    phone character varying,
+    created_at timestamp without time zone,
+    address text,
+    id integer,
+    name character varying,
+    gst_number character varying
+);
+CREATE TABLE sessions
+(
+    sid character varying,
+    expire timestamp without time zone,
+    sess jsonb
+);
+CREATE TABLE customer_enrollments
+(
+    created_at timestamp without time zone,
+    card_number character varying,
+    monthly_amount numeric,
+    id integer,
+    scheme_id integer,
+    updated_at timestamp without time zone,
+    status character varying,
+    customer_id integer,
+    start_date date
+);
+CREATE TABLE employees
+(
+    emp_code character varying,
+    created_at timestamp without time zone,
+    updated_at timestamp without time zone,
+    email character varying,
+    password character varying,
+    role character varying,
+    id integer,
+    phone character varying,
+    photo character varying,
+    status character varying,
+    name character varying
+);
+CREATE TABLE stock_movements
+(
+    product_id integer,
+    rate_at_time numeric,
+    updated_at timestamp without time zone,
+    reference character varying,
+    weight numeric,
+    id integer,
+    type character varying,
+    created_at timestamp without time zone
+);
+CREATE TABLE users
+(
+    profile_image_url character varying,
+    email character varying,
+    updated_at timestamp without time zone,
+    first_name character varying,
+    id character varying,
+    last_name character varying,
+    created_at timestamp without time zone
+);
+CREATE TABLE price_master
+(
+    effective_date date,
+    id integer,
+    price_per_gram numeric,
+    updated_at timestamp without time zone,
+    created_at timestamp without time zone,
+    jewel_type_id integer
+);
+CREATE TABLE jewel_types
+(
+    created_at timestamp without time zone,
+    name character varying,
+    code character varying,
+    carat integer,
+    id integer,
+    updated_at timestamp without time zone
+);
+CREATE TABLE product_categories
+(
+    name character varying,
+    hsn_code character varying,
+    updated_at timestamp without time zone,
+    jewel_type_id integer,
+    tax_percentage numeric,
+    id integer,
+    code character varying,
+    created_at timestamp without time zone
+);
+CREATE TABLE monthly_payments
+(
+    enrollment_id integer,
+    gold_rate numeric,
+    created_at timestamp without time zone,
+    gold_grams numeric,
+    amount numeric,
+    id integer,
+    payment_date date,
+    updated_at timestamp without time zone,
+    month_number integer
+);
+CREATE TABLE customers
+(
+    address text,
+    date_of_birth date,
+    gst_number character varying,
+    anniversary date,
+    name character varying,
+    id integer,
+    phone character varying,
+    customer_id character varying,
+    pan_card character varying,
+    updated_at timestamp without time zone,
+    created_at timestamp without time zone,
+    email character varying
+);
+CREATE TABLE products
+(
+    dealer_id integer,
+    making_charge_type character varying,
+    weight character varying,
+    making_charge_value character varying,
+    created_at timestamp without time zone,
+    barcode_number character varying,
+    id integer,
+    type character varying,
+    name character varying,
+    central_govt_number character varying,
+    wastage_charge_type character varying,
+    wastage_charge_value character varying,
+    stone_weight character varying,
+    category_id integer,
+    updated_at timestamp without time zone
+);
+CREATE TABLE saving_scheme_master
+(
+    terms_and_conditions text,
+    updated_at timestamp without time zone,
+    jewel_type_id integer,
+    created_at timestamp without time zone,
+    total_months integer,
+    id integer,
+    scheme_name character varying,
+    description text
+);

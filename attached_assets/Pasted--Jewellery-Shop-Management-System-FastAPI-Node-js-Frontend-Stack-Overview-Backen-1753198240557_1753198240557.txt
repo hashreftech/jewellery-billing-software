@@ -1,0 +1,139 @@
+# 💎 Jewellery Shop Management System — FastAPI + Node.js Frontend
+
+## 📘 Stack Overview
+
+- **Backend**: Python [FastAPI]
+  - RESTful API-based architecture
+  - PostgreSQL or MySQL database
+  - JWT-based authentication
+- **Frontend**: JavaScript [React or Vue.js]
+  - Responsive, modern UI using **CoreUI** or **Sneat Bootstrap 5**
+  - Communicates with FastAPI via Axios/Fetch
+- **Packaging**: Desktop-capable (via ElectronJS optional)
+
+---
+
+## 🧱 Core Modules
+
+### 1. 🧍 Customers
+- `customer_id` (Auto: e.g., `CUST-20250722-001`)
+- `name*`, `phone*`, `email`, `address`
+- `gst_number`, `date_of_birth`, `anniversary*`, `pan_card`
+
+**API Routes**
+- `GET /customers`, `POST /customers`, `PUT /customers/{id}`, `DELETE /customers/{id}`
+- `GET /customers/search?query=mobileOrName`
+
+---
+
+### 2. 👨‍💼 Employees
+- `emp_code*`, `name*`, `phone*`, `email`, `role*`, `photo`
+- `password*` (hashed), `status` (Active/Inactive)
+
+**Auth**
+- JWT-based login, role guard (admin/manager/staff)
+
+---
+
+### 3. 🤝 Dealers
+- `name*`, `phone*`, `address*`, `gst_number*`, `categories[]` (multi-select)
+
+---
+
+### 4. 💍 Jewel Types
+- `name*`, `code*`, `carat`
+
+---
+
+### 5. 🗂️ Product Categories
+- `name*`, `code*`, `tax_percentage*`, `hsn_code*`, `jewel_type_id*`
+
+---
+
+### 6. 📦 Products
+- `name*`, `barcode_number*`, `type*` (No stone / Stone / Diamond Stone)
+- `stone_weight` (if applicable)
+- `dealer_id*`, `weight*`, `making_charge_type`, `making_charge_value`
+- `wastage_charge_type`, `wastage_charge_value`
+- `central_govt_number`
+
+> 💡 No price field — price calculated at order time from `price_master`
+
+---
+
+### 7. 💰 Price Master
+- `jewel_type_id*`, `effective_date*`, `price_per_gram*`
+
+---
+
+### 8. 🧾 Purchase Orders
+- `order_number` (Auto)
+- `customer_id*`, `products[]` (with barcode support)
+- `overall_discount`, `order_date`
+
+> 🔁 Price calculated dynamically using today’s price from `price_master`
+
+---
+
+## 📦 Stock Management
+
+### Inventory Movement
+- `stock_movements` table tracks:
+  - `product_id`, `type` (in/out), `weight`, `date`, `rate_at_time`
+
+### Live Stock Value
+- Compute available stock & valuation from stock in/out and latest rates
+- API: `GET /reports/stock-summary`
+
+---
+
+## 📊 Reports
+
+### 1. Stock In/Out (with date filter)
+- API: `GET /reports/stock-in`, `GET /reports/stock-out`
+
+### 2. Valuation Report
+- Compare original value vs current market value
+- API: `GET /reports/valuation?start=X&end=Y`
+
+### 3. Customer Order Report
+- `GET /reports/customer-orders?customer_id=X&from=&to=`
+
+### 4. Dealer Sales Report
+- `GET /reports/dealer-sales?dealer_id=X&from=&to=`
+
+---
+
+## 💳 Saving Scheme Module
+
+### Saving Scheme Master
+- `scheme_name`, `jewel_type_id`, `total_months`
+- `description`, `terms_and_conditions`
+
+### Customer Enrollments
+- `customer_id`, `scheme_id`, `monthly_amount`, `start_date`
+- Auto card number (`SCH-YYYYMMDD-###`)
+
+### Monthly Payments
+- `payment_date`, `amount`, `gold_rate`, `gold_grams`
+- Validate no more than `total_months`
+
+### APIs
+- `POST /savings/enroll`, `GET /savings/by-customer`
+- `POST /savings/pay`, `GET /savings/status`
+
+---
+
+## 🖨️ Printable Reports
+
+All APIs must support exporting:
+- `/reports/*.pdf`
+- `/reports/*.xlsx`
+
+Frontend can offer PDF generation via jsPDF or server-rendered via FastAPI and WeasyPrint.
+
+---
+
+## 🗂️ Suggested Project Structure
+
+### Backend (FastAPI)

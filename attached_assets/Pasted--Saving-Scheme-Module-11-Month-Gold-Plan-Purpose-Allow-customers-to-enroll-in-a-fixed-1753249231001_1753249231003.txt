@@ -1,0 +1,96 @@
+## 💳 Saving Scheme Module (11-Month Gold Plan)
+
+### 📐 Purpose
+Allow customers to enroll in a fixed monthly savings scheme, paying a fixed amount each month for gold. The **gold rate on the date of payment** determines the grams they earn for that payment.
+
+---
+
+### 🧾 Saving Scheme Master
+
+| Field                | Type                  |
+|---------------------|-----------------------|
+| `scheme_name*`       | Text                  |
+| `jewel_type_id*`     | Dropdown              |
+| `total_months*`      | Integer (e.g., 11)    |
+| `description`        | Textarea              |
+| `terms_and_conditions` | Long Text (HTML/Printable) |
+
+**API**
+- `POST /savings/schemes`
+- `GET /savings/schemes`
+
+---
+
+### 👤 Customer Enrollments
+
+| Field            | Type            |
+|------------------|-----------------|
+| `customer_id*`   | Dropdown/Search |
+| `scheme_id*`     | Reference       |
+| `monthly_amount*`| Number (₹)      |
+| `start_date*`    | Date            |
+| `card_number`    | Auto-generated (e.g., SCH-20250722-001) |
+
+**API**
+- `POST /savings/enroll`
+- `GET /savings/enrollments`
+- `GET /savings/enrollments/{id}`
+
+---
+
+### 📅 Monthly Payments
+
+| Field             | Description                              |
+|-------------------|------------------------------------------|
+| `payment_date`    | Date of payment (auto-today)             |
+| `amount`          | Must match enrolled monthly_amount       |
+| `gold_rate`       | Fetched from `price_master` on this date |
+| `gold_grams`      | Computed: `amount / gold_rate`           |
+
+> ❗ **Rules**:
+> - Max `total_months` payments
+> - 1 payment per month (enforced)
+> - Auto-calculate grams based on gold price on payment date
+> - Payment date must fall within scheme duration
+
+**API**
+- `POST /savings/payments`
+- `GET /savings/payments?enrollment_id=X`
+
+---
+
+### 📊 Customer Scheme Details (Frontend View)
+
+When viewing an enrolled customer:
+
+- Header Info:
+  - `Customer Name`, `Scheme Name`, `Card Number`
+  - `Monthly Amount`: ₹X
+  - `Start Date`: DD-MM-YYYY
+  - `Total Months`: 11
+  - `Months Paid`: 3 / 11
+  - `Remaining`: 8
+  - ✅ `Total Gold Accumulated`: XX.XXXg
+
+---
+
+#### 💡 Payment Table (in UI)
+
+| Month    | Payment Date | Gold Rate (₹/g) | Amount Paid (₹) | Grams Earned |
+|----------|--------------|------------------|------------------|---------------|
+| July     | 2025-07-05   | ₹5980            | ₹5000            | 0.8361g       |
+| August   | 2025-08-03   | ₹6000            | ₹5000            | 0.8333g       |
+| ...      | ...          | ...              | ...              | ...           |
+
+✅ **Total Gold Owned** (bottom row): **X.XXXg**
+
+---
+
+### 🖨️ Scheme Card Export
+
+- Printable layout with:
+  - Customer + scheme details
+  - Terms & conditions
+  - QR/Barcode (optional)
+  - Current progress and gold accumulated
+
