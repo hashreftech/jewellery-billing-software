@@ -4,8 +4,7 @@ import { useToast } from "@/hooks/use-toast";
 import { isUnauthorizedError } from "@/lib/authUtils";
 import { useAuth } from "@/hooks/useAuth";
 import { apiRequest } from "@/lib/queryClient";
-import Sidebar from "@/components/layout/sidebar";
-import Topbar from "@/components/layout/topbar";
+import Layout from "@/components/layout/layout";
 import DataTable from "@/components/ui/data-table";
 import CustomerModal from "@/components/modals/customer-modal";
 import { Button } from "@/components/ui/button";
@@ -212,23 +211,17 @@ export default function Customers() {
   }
 
   return (
-    <div className="flex h-screen bg-gray-50">
-      <Sidebar />
-      
-      <div className="flex flex-col flex-1 overflow-hidden">
-        <Topbar />
-        
-        <main className="flex-1 overflow-y-auto p-6">
-          <div className="max-w-7xl mx-auto">
-            {/* Page Header */}
-            <div className="flex items-center justify-between mb-6">
-              <div>
-                <h1 className="text-3xl font-bold text-gray-900">Customers</h1>
-                <p className="text-gray-600 mt-1">Manage your customer database</p>
-              </div>
-              <Button
-                onClick={() => {
-                  setEditingCustomer(null);
+    <Layout>
+      <div className="max-w-7xl mx-auto">
+        {/* Page Header */}
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900">Customers</h1>
+            <p className="text-gray-600 mt-1">Manage your customer database</p>
+          </div>
+          <Button
+            onClick={() => {
+              setEditingCustomer(null);
                   setShowModal(true);
                 }}
                 className="flex items-center space-x-2 bg-primary-500 hover:bg-primary-600"
@@ -268,18 +261,16 @@ export default function Customers() {
               </CardContent>
             </Card>
           </div>
-        </main>
-      </div>
 
-      {/* Customer Modal */}
-      <CustomerModal
-        open={showModal}
-        onOpenChange={setShowModal}
-        customer={editingCustomer}
-        mode={editingCustomer ? "edit" : "create"}
-      />
+          {/* Customer Modal */}
+          <CustomerModal
+            open={showModal}
+            onOpenChange={setShowModal}
+            customer={editingCustomer}
+            mode={editingCustomer ? "edit" : "create"}
+          />
 
-      {/* Delete Confirmation Dialog */}
+          {/* Delete Confirmation Dialog */}
       <AlertDialog open={!!deletingCustomer} onOpenChange={() => setDeletingCustomer(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -300,6 +291,6 @@ export default function Customers() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+    </Layout>
   );
 }

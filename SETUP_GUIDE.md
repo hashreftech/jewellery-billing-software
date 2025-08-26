@@ -105,10 +105,12 @@ After running `npm run db:push` or `node reset-database.js fresh`, the following
 - Auto-generated customer IDs (CUST-YYYYMMDD-###)
 
 #### Sample Products
-- Gold Chain 22K, Gold Earrings 22K
-- Silver Bracelet
-- Diamond Ring
-- Complete with barcode numbers and making charges
+- Gold Chain 22K (Purity: 22K, Net Weight: 15.50g, Gross Weight: 16.25g, Making Charge: ₹200/g)
+- Silver Bracelet (Purity: 925, Net Weight: 25.00g, Gross Weight: 25.50g, Making Charge: ₹50/g)
+- Diamond Ring (Purity: 18K, Net Weight: 6.75g, Gross Weight: 8.25g, Making Charge: ₹500/g)
+- Gold Earrings 22K (Purity: 22K, Net Weight: 11.50g, Gross Weight: 12.75g, Making Charge: ₹250/g)
+- Complete with barcode numbers, making charges, wastage charges, and additional costs
+- All products include proper weight specifications and making charge configurations
 
 #### Saving Schemes
 - 6-Month Quick Plan
@@ -120,6 +122,24 @@ After running `npm run db:push` or `node reset-database.js fresh`, the following
 - Username: admin
 - Password: admin123
 - Role: admin
+
+#### Company Settings (New Invoice Features)
+- Company Name: Golden Jewellers
+- Complete address and contact information
+- GST Number and banking details for professional invoicing
+- Customizable invoice terms and conditions
+
+#### Discount Rules System
+- VIP Customer Making Charge Discount (5% on orders above ₹50,000)
+- Bulk Order Gold Value Discount (3% on orders above ₹1,00,000)
+- Festival Special Total Discount (₹2,000 on orders above ₹75,000)
+- Configurable discount types: percentage, fixed amount, per gram
+
+#### Payment Tracking
+- Sample purchase orders with invoice numbers
+- Advance amount and outstanding amount tracking
+- Payment transaction history
+- Professional invoice generation in multiple formats
 
 ## Application Features
 

@@ -13,5 +13,7 @@ export const PROTECTED_CATEGORY_CODES = [
   "CAT-GOLD22K",
   "CAT-GOLD18K",
   "CAT-SILVER",
-  "CAT-DIAMOND"
+  "CAT-DIAMOND",
+  // Include platinum to prevent accidental deletion of base category
+  "CAT-PLATINUM"
 ];

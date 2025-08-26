@@ -18,6 +18,7 @@ import {
   insertMonthlyPaymentSchema,
 } from "@shared/schema";
 import { z } from "zod";
+import { computeFinalPrice, productToPriceInputs, calculatePurchaseOrderItemPrice, calculateOrderSummary } from "@shared/pricing-utils";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware
@@ -517,7 +518,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: "Access denied. Only Admin and Manager can create purchase orders." });
       }
 
-      const { items, discount = 0, orderDate, customerId, status = 'pending' } = req.body;
+      console.log("Full request body:", JSON.stringify(req.body, null, 2));
+
+      const { items, discount = 0, orderDate, customerId, status = 'pending', subTotal, totalGoldGrossWeight, grandTotal, gstAmount } = req.body;
+
+      console.log("Extracted fields:", { subTotal, totalGoldGrossWeight, grandTotal, gstAmount });
+      console.log("Types:", { 
+        subTotal: typeof subTotal, 
+        totalGoldGrossWeight: typeof totalGoldGrossWeight, 
+        grandTotal: typeof grandTotal, 
+        gstAmount: typeof gstAmount 
+      });
       
       if (!Array.isArray(items) || items.length === 0) {
         return res.status(400).json({ message: "At least one item is required" });
@@ -527,39 +538,91 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Customer is required" });
       }
 
-      // Calculate totals from items
+      // Validate that required total fields are provided
+      if (!subTotal || !totalGoldGrossWeight || !grandTotal || !gstAmount) {
+        return res.status(400).json({ message: "Missing required total fields: subTotal, totalGoldGrossWeight, grandTotal, gstAmount" });
+      }
+
+      // Calculate totals from items using comprehensive pricing
       let totalAmount = 0;
       const processedItems = [];
+      const orderBreakdowns = [];
 
       for (const item of items) {
-        const { productId, quantity, weight, pricePerGram, basePrice, taxAmount, finalPrice } = item;
+        const { productId, quantity } = item;
         
         // Validate required fields
-        if (!productId || !quantity || !weight || !pricePerGram || basePrice === undefined || taxAmount === undefined || finalPrice === undefined) {
-          return res.status(400).json({ message: "All item fields are required" });
+        if (!productId || !quantity) {
+          return res.status(400).json({ message: "Product ID and quantity are required for each item" });
         }
 
-        totalAmount += Number(finalPrice) * Number(quantity);
+        // Get product details
+        const product = await storage.getProduct(Number(productId));
+        if (!product) {
+          return res.status(400).json({ message: `Product with ID ${productId} not found` });
+        }
+
+        // Get latest price for product category
+        const priceData = await storage.getLatestPriceForCategory(product.categoryId!);
+        if (!priceData) {
+          return res.status(400).json({ message: `No price data found for product ${product.name}` });
+        }
+
+        // Get category for GST rate
+        const category = await storage.getProductCategory(product.categoryId!);
+        const gstRate = category ? parseFloat(String(category.taxPercentage)) : 3.0;
+
+        // Calculate comprehensive pricing
+        const stoneValue = item.stoneValue || 0; // Optional stone value from frontend
+        const { breakdown } = calculatePurchaseOrderItemPrice(
+          product,
+          Number(quantity),
+          parseFloat(String(priceData.pricePerGram)),
+          gstRate,
+          stoneValue
+        );
+
+        totalAmount += breakdown.final_price * Number(quantity);
+        
         processedItems.push({
           productId: Number(productId),
           quantity: Number(quantity),
-          weight: String(weight),
-          pricePerGram: String(pricePerGram),
-          basePrice: String(basePrice),
-          taxAmount: String(taxAmount),
-          finalPrice: String(finalPrice),
+          purity: product.purity,
+          goldRatePerGram: String(priceData.pricePerGram),
+          netWeight: String(product.netWeight),
+          grossWeight: String(product.grossWeight),
+          labourRatePerGram: String((breakdown.making_charge / Math.max(parseFloat(String(product.netWeight)), 1)).toFixed(2)), // For compatibility
+          additionalCost: String(breakdown.additional_cost),
+          basePrice: String(breakdown.subtotal),
+          gstPercentage: String(gstRate),
+          gstAmount: String(breakdown.gst_amount),
+          totalPrice: String(breakdown.final_price),
+        });
+
+        orderBreakdowns.push({
+          breakdown,
+          quantity: Number(quantity),
+          netWeight: parseFloat(String(product.netWeight))
         });
       }
 
-      // Apply discount
-      totalAmount = totalAmount - Number(discount);
+      // Calculate order summary
+      const orderSummary = calculateOrderSummary(orderBreakdowns);
 
-      // Create purchase order
+      // Apply discount
+      const finalTotalAmount = totalAmount - Number(discount);
+
+      // Create purchase order with calculated totals
       const orderData = {
         customerId: Number(customerId),
         orderDate: orderDate || new Date().toISOString().split('T')[0],
         status,
-        totalAmount: String(totalAmount),
+        subTotal: String(orderSummary.subtotal),
+        totalMakingCharges: String(orderSummary.totalMakingCharges),
+        totalGoldGrossWeight: String(orderSummary.totalGoldWeight),
+        grandTotal: String(finalTotalAmount),
+        gstAmount: String(orderSummary.totalGstAmount),
+        totalAmount: String(finalTotalAmount),
         discount: String(discount),
         createdBy: currentUser.id,
         updatedBy: currentUser.id,
@@ -583,9 +646,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         updatedBy: currentUser.id,
         changes: {
           action: 'created',
-          details: `Purchase order created with ${items.length} items`,
-          totalAmount: totalAmount,
+          details: `Purchase order created with ${items.length} items using comprehensive pricing`,
+          totalAmount: finalTotalAmount,
           itemCount: items.length,
+          orderSummary: {
+            totalGoldValue: orderSummary.totalGoldValue,
+            totalMakingCharges: orderSummary.totalMakingCharges,
+            totalWastageCharges: orderSummary.totalWastageCharges,
+            totalGoldWeight: orderSummary.totalGoldWeight,
+            subtotal: orderSummary.subtotal,
+            gstAmount: orderSummary.totalGstAmount,
+            grandTotal: finalTotalAmount
+          }
         },
       });
 
@@ -618,23 +690,192 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Purchase order not found" });
       }
 
+      // Get existing items for audit tracking
+      const existingItems = await storage.getPurchaseOrderItems(id);
+      
       const { items, discount, status, ...otherUpdates } = req.body;
       let updateData: any = {
         ...otherUpdates,
         updatedBy: currentUser.id,
+        updatedAt: new Date()
       };
 
-      if (discount !== undefined) updateData.discount = String(discount);
+      if (discount !== undefined) updateData.totalDiscountAmount = String(discount);
       if (status !== undefined) updateData.status = status;
 
-      // If items are being updated, recalculate total
-      if (items) {
-        let totalAmount = 0;
-        for (const item of items) {
-          totalAmount += Number(item.finalPrice) * Number(item.quantity);
+      // Track audit changes
+      const auditChanges: any = {
+        action: 'updated',
+        changedFields: [],
+        itemChanges: {
+          added: [],
+          updated: [],
+          removed: []
+        },
+        previousValues: {
+          status: existingOrder.status,
+          totalAmount: existingOrder.totalAmount,
+          totalDiscountAmount: existingOrder.totalDiscountAmount,
+        },
+        newValues: {}
+      };
+
+      // Handle field changes
+      Object.keys(updateData).forEach(field => {
+        if (field !== 'updatedBy' && field !== 'updatedAt' && 
+            (existingOrder as any)[field] !== updateData[field]) {
+          auditChanges.changedFields.push(field);
+          auditChanges.newValues[field] = updateData[field];
         }
+      });
+
+      // Process items if provided
+      if (Array.isArray(items)) {
+        let totalAmount = 0;
+        
+        // Map existing items by ID for quick lookup
+        const existingItemsMap = new Map(
+          existingItems.map(item => [item.id, item])
+        );
+        
+        const processedItems = [];
+        
+        // Process each item in the request
+        for (const item of items) {
+          // Handle both old and new field names for backwards compatibility
+          const { 
+            productId, 
+            quantity, 
+            // Old field names
+            weight, 
+            pricePerGram, 
+            basePrice, 
+            taxAmount, 
+            finalPrice,
+            // New field names
+            netWeight,
+            grossWeight,
+            goldRatePerGram,
+            gstAmount,
+            totalPrice
+          } = item;
+          
+          // Use new field names if available, otherwise fall back to old ones
+          const itemNetWeight = netWeight || weight;
+          const itemGrossWeight = grossWeight || weight;
+          const itemGoldRate = goldRatePerGram || pricePerGram;
+          const itemGstAmount = gstAmount || taxAmount;
+          const itemTotalPrice = totalPrice || finalPrice;
+          
+          // Validate required fields
+          if (!quantity || !itemNetWeight || !itemGoldRate || basePrice === undefined || itemGstAmount === undefined || itemTotalPrice === undefined) {
+            return res.status(400).json({ message: "All item fields are required" });
+          }
+
+          totalAmount += Number(itemTotalPrice) * Number(quantity);
+          
+          if (item.id) {
+            // Existing item - check for updates
+            const existingItem = existingItemsMap.get(item.id);
+            if (existingItem) {
+              existingItemsMap.delete(item.id); // Remove from map to track deletions
+              
+              // Check what changed  
+              const before: any = {};
+              const after: any = {};
+              let hasChanges = false;
+              
+              // Map between old field names and new schema field names
+              const fieldMapping = [
+                { old: 'quantity', new: 'quantity' },
+                { old: 'weight', new: 'netWeight' },
+                { old: 'pricePerGram', new: 'goldRatePerGram' },
+                { old: 'basePrice', new: 'basePrice' },
+                { old: 'taxAmount', new: 'gstAmount' },
+                { old: 'finalPrice', new: 'totalPrice' }
+              ];
+              
+              fieldMapping.forEach(({ old, new: newField }) => {
+                const itemValue = item[old] !== undefined ? item[old] : item[newField];
+                const existingValue = (existingItem as any)[newField];
+                
+                if (String(existingValue) !== String(itemValue)) {
+                  before[newField] = existingValue;
+                  after[newField] = itemValue;
+                  hasChanges = true;
+                }
+              });
+              
+              // If anything changed, update the item
+              if (hasChanges) {
+                const updatedItem = await storage.updatePurchaseOrderItem(item.id, {
+                  quantity: Number(quantity),
+                  netWeight: String(itemNetWeight),
+                  grossWeight: String(itemGrossWeight),
+                  goldRatePerGram: String(itemGoldRate),
+                  basePrice: String(basePrice),
+                  gstAmount: String(itemGstAmount),
+                  totalPrice: String(itemTotalPrice),
+                  purity: "22K", // Default purity
+                  labourRatePerGram: "0", // Default labour rate
+                  gstPercentage: "3.0", // Default GST percentage
+                  additionalCost: "0", // Default additional cost
+                });
+                
+                auditChanges.itemChanges.updated.push({
+                  id: item.id,
+                  productId: existingItem.productId,
+                  before,
+                  after
+                });
+              }
+            }
+          } else if (productId) {
+            // New item
+            const newItemData = {
+              purchaseOrderId: id,
+              productId: Number(productId),
+              quantity: Number(quantity),
+              purity: "22K", // Default purity
+              netWeight: String(itemNetWeight),
+              grossWeight: String(itemGrossWeight),
+              goldRatePerGram: String(itemGoldRate),
+              labourRatePerGram: "0", // Default labour rate
+              additionalCost: "0", // Default additional cost
+              basePrice: String(basePrice),
+              gstPercentage: "3.0", // Default GST percentage
+              gstAmount: String(itemGstAmount),
+              totalPrice: String(itemTotalPrice),
+            };
+            
+            const validatedItem = insertPurchaseOrderItemSchema.parse(newItemData);
+            const createdItems = await storage.createPurchaseOrderItems([validatedItem]);
+            
+            auditChanges.itemChanges.added.push({
+              productId: Number(productId),
+              quantity: Number(quantity),
+              netWeight: String(itemNetWeight),
+              totalPrice: String(itemTotalPrice)
+            });
+          }
+        }
+        
+        // Remove items that weren't in the update (deleted items)
+        for (const [itemId, existingItem] of Array.from(existingItemsMap.entries())) {
+          await storage.deletePurchaseOrderItem(itemId);
+          auditChanges.itemChanges.removed.push({
+            id: itemId,
+            productId: existingItem.productId,
+            quantity: existingItem.quantity,
+            netWeight: existingItem.netWeight,
+            totalPrice: existingItem.totalPrice
+          });
+        }
+
+        // Apply discount and update total
         totalAmount = totalAmount - Number(discount || 0);
         updateData.totalAmount = String(totalAmount);
+        auditChanges.newValues.totalAmount = String(totalAmount);
       }
 
       const validatedData = insertPurchaseOrderSchema.partial().parse(updateData);
@@ -644,21 +885,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Purchase order not found" });
       }
 
-      // Create audit log
+      // Create detailed audit log
       await storage.createPurchaseOrderAuditLog({
         purchaseOrderId: id,
         updatedBy: currentUser.id,
-        changes: {
-          action: 'updated',
-          details: 'Purchase order updated',
-          changedFields: Object.keys(updateData),
-          previousValues: {
-            status: existingOrder.status,
-            totalAmount: existingOrder.totalAmount,
-            discount: existingOrder.discount,
-          },
-          newValues: updateData,
-        },
+        changes: auditChanges,
       });
 
       res.json(order);
@@ -668,6 +899,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Validation error", errors: error.errors });
       }
       res.status(500).json({ message: "Failed to update purchase order" });
+    }
+  });
+
+  // Get purchase order audit logs
+  app.get('/api/purchase-orders/:id/audit', isAuthenticated, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const auditLogs = await storage.getPurchaseOrderAuditLogs(id);
+      res.json(auditLogs);
+    } catch (error) {
+      console.error("Error fetching purchase order audit logs:", error);
+      res.status(500).json({ message: "Failed to fetch audit logs" });
     }
   });
 
@@ -928,6 +1171,65 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Validation error", errors: error.errors });
       }
       res.status(500).json({ message: "Failed to create monthly payment" });
+    }
+  });
+
+  // Calculate pricing for products
+  app.post("/api/calculate-pricing", isAuthenticated, async (req, res) => {
+    try {
+      const { productId, quantity = 1, stoneValue = 0 } = req.body;
+
+      if (!productId) {
+        return res.status(400).json({ message: "Product ID is required" });
+      }
+
+      // Get product details
+      const product = await storage.getProduct(Number(productId));
+      if (!product) {
+        return res.status(404).json({ message: "Product not found" });
+      }
+
+      // Get latest price for product category
+      const priceData = await storage.getLatestPriceForCategory(product.categoryId!);
+      if (!priceData) {
+        return res.status(404).json({ message: "No price data found for this product category" });
+      }
+
+      // Get category for GST rate
+      const category = await storage.getProductCategory(product.categoryId!);
+      const gstRate = category ? parseFloat(String(category.taxPercentage)) : 3.0;
+
+      // Calculate comprehensive pricing
+      const { breakdown } = calculatePurchaseOrderItemPrice(
+        product,
+        Number(quantity),
+        parseFloat(String(priceData.pricePerGram)),
+        gstRate,
+        Number(stoneValue)
+      );
+
+      res.json({
+        product: {
+          id: product.id,
+          name: product.name,
+          netWeight: product.netWeight,
+          grossWeight: product.grossWeight,
+          makingChargeType: product.makingChargeType,
+          makingChargeValue: product.makingChargeValue,
+          wastageChargeType: product.wastageChargeType,
+          wastageChargeValue: product.wastageChargeValue
+        },
+        pricing: {
+          goldRatePerGram: priceData.pricePerGram,
+          gstRate,
+          quantity: Number(quantity),
+          stoneValue: Number(stoneValue),
+          breakdown
+        }
+      });
+    } catch (error) {
+      console.error("Error calculating pricing:", error);
+      res.status(500).json({ message: "Failed to calculate pricing" });
     }
   });
 

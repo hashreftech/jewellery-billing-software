@@ -24,6 +24,7 @@ function dropAllTables() {
       DROP TABLE IF EXISTS customer_enrollments CASCADE;
       DROP TABLE IF EXISTS saving_scheme_master CASCADE;
       DROP TABLE IF EXISTS stock_movements CASCADE;
+      DROP TABLE IF EXISTS payment_transactions CASCADE;
       DROP TABLE IF EXISTS purchase_orders CASCADE;
       DROP TABLE IF EXISTS price_master CASCADE;
       DROP TABLE IF EXISTS products CASCADE;
@@ -33,12 +34,15 @@ function dropAllTables() {
       DROP TABLE IF EXISTS customers CASCADE;
       DROP TABLE IF EXISTS users CASCADE;
       DROP TABLE IF EXISTS employees CASCADE;
+      DROP TABLE IF EXISTS discount_rules CASCADE;
+      DROP TABLE IF EXISTS company_settings CASCADE;
       DROP TABLE IF EXISTS sessions CASCADE;
       DROP INDEX IF EXISTS IDX_session_expire;
       DROP SEQUENCE IF EXISTS monthly_payments_id_seq CASCADE;
       DROP SEQUENCE IF EXISTS customer_enrollments_id_seq CASCADE;
       DROP SEQUENCE IF EXISTS saving_scheme_master_id_seq CASCADE;
       DROP SEQUENCE IF EXISTS stock_movements_id_seq CASCADE;
+      DROP SEQUENCE IF EXISTS payment_transactions_id_seq CASCADE;
       DROP SEQUENCE IF EXISTS purchase_orders_id_seq CASCADE;
       DROP SEQUENCE IF EXISTS price_master_id_seq CASCADE;
       DROP SEQUENCE IF EXISTS products_id_seq CASCADE;
@@ -47,6 +51,8 @@ function dropAllTables() {
       DROP SEQUENCE IF EXISTS dealers_id_seq CASCADE;
       DROP SEQUENCE IF EXISTS customers_id_seq CASCADE;
       DROP SEQUENCE IF EXISTS employees_id_seq CASCADE;
+      DROP SEQUENCE IF EXISTS discount_rules_id_seq CASCADE;
+      DROP SEQUENCE IF EXISTS company_settings_id_seq CASCADE;
     "`, { stdio: 'inherit' });
     console.log('✅ All tables and sequences dropped successfully');
   } catch (error) {

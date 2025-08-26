@@ -8,6 +8,9 @@ import {
   purchaseOrders,
   purchaseOrderItems,
   purchaseOrderAuditLog,
+  paymentTransactions,
+  discountRules,
+  companySettings,
   stockMovements,
   savingSchemeMaster,
   customerEnrollments,
@@ -30,6 +33,12 @@ import {
   type InsertPurchaseOrderItem,
   type PurchaseOrderAuditLog,
   type InsertPurchaseOrderAuditLog,
+  type PaymentTransaction,
+  type InsertPaymentTransaction,
+  type DiscountRule,
+  type InsertDiscountRule,
+  type CompanySettings,
+  type InsertCompanySettings,
   type StockMovement,
   type InsertStockMovement,
   type SavingScheme,
@@ -119,6 +128,20 @@ export interface IStorage {
   getStockMovements(): Promise<StockMovement[]>;
   getProductStockMovements(productId: number): Promise<StockMovement[]>;
   createStockMovement(movement: InsertStockMovement): Promise<StockMovement>;
+
+  // Company settings operations
+  getCompanySettings(): Promise<CompanySettings | undefined>;
+  updateCompanySettings(settings: Partial<InsertCompanySettings>): Promise<CompanySettings>;
+
+  // Discount rules operations
+  getDiscountRules(): Promise<DiscountRule[]>;
+  getActiveDiscountRules(): Promise<DiscountRule[]>;
+  createDiscountRule(rule: InsertDiscountRule): Promise<DiscountRule>;
+  updateDiscountRule(id: number, rule: Partial<InsertDiscountRule>): Promise<DiscountRule>;
+
+  // Payment transaction operations
+  getPaymentTransactions(purchaseOrderId: number): Promise<PaymentTransaction[]>;
+  createPaymentTransaction(transaction: InsertPaymentTransaction): Promise<PaymentTransaction>;
 
   // Saving Scheme operations
   getSavingSchemes(): Promise<SavingScheme[]>;
@@ -367,7 +390,8 @@ export class DatabaseStorage implements IStorage {
         type: products.type,
         stoneWeight: products.stoneWeight,
         dealerId: products.dealerId,
-        weight: products.weight,
+        weight: products.netWeight, // Updated to use netWeight
+        grossWeight: products.grossWeight,
         makingChargeType: products.makingChargeType,
         makingChargeValue: products.makingChargeValue,
         wastageChargeType: products.wastageChargeType,
@@ -396,6 +420,7 @@ export class DatabaseStorage implements IStorage {
       stoneWeight: r.stoneWeight,
       dealerId: r.dealerId,
       weight: r.weight,
+      grossWeight: r.grossWeight, // Add the missing grossWeight field
       makingChargeType: r.makingChargeType,
       makingChargeValue: r.makingChargeValue,
       wastageChargeType: r.wastageChargeType,
@@ -652,7 +677,7 @@ export class DatabaseStorage implements IStorage {
         orderDate: purchaseOrders.orderDate,
         status: purchaseOrders.status,
         totalAmount: purchaseOrders.totalAmount,
-        discount: purchaseOrders.discount,
+        totalDiscountAmount: purchaseOrders.totalDiscountAmount,
         createdAt: purchaseOrders.createdAt,
         updatedAt: purchaseOrders.updatedAt,
         createdBy: purchaseOrders.createdBy,
@@ -687,11 +712,16 @@ export class DatabaseStorage implements IStorage {
         purchaseOrderId: purchaseOrderItems.purchaseOrderId,
         productId: purchaseOrderItems.productId,
         quantity: purchaseOrderItems.quantity,
-        weight: purchaseOrderItems.weight,
-        pricePerGram: purchaseOrderItems.pricePerGram,
+        purity: purchaseOrderItems.purity,
+        netWeight: purchaseOrderItems.netWeight,
+        grossWeight: purchaseOrderItems.grossWeight,
+        goldRatePerGram: purchaseOrderItems.goldRatePerGram,
+        labourRatePerGram: purchaseOrderItems.labourRatePerGram,
+        additionalCost: purchaseOrderItems.additionalCost,
         basePrice: purchaseOrderItems.basePrice,
-        taxAmount: purchaseOrderItems.taxAmount,
-        finalPrice: purchaseOrderItems.finalPrice,
+        gstPercentage: purchaseOrderItems.gstPercentage,
+        gstAmount: purchaseOrderItems.gstAmount,
+        totalPrice: purchaseOrderItems.totalPrice,
         createdAt: purchaseOrderItems.createdAt,
         updatedAt: purchaseOrderItems.updatedAt,
         productName: products.name,
@@ -800,6 +830,75 @@ export class DatabaseStorage implements IStorage {
   async createStockMovement(movement: InsertStockMovement): Promise<StockMovement> {
     const [newMovement] = await db.insert(stockMovements).values(movement).returning();
     return newMovement;
+  }
+
+  // Company settings operations
+  async getCompanySettings(): Promise<CompanySettings | undefined> {
+    const [settings] = await db.select().from(companySettings).limit(1);
+    return settings;
+  }
+
+  async updateCompanySettings(settings: Partial<InsertCompanySettings>): Promise<CompanySettings> {
+    const existing = await this.getCompanySettings();
+    if (existing) {
+      const [updated] = await db
+        .update(companySettings)
+        .set({ ...settings, updatedAt: new Date() })
+        .where(eq(companySettings.id, existing.id))
+        .returning();
+      return updated;
+    } else {
+      const [created] = await db.insert(companySettings).values(settings as InsertCompanySettings).returning();
+      return created;
+    }
+  }
+
+  // Discount rules operations
+  async getDiscountRules(): Promise<DiscountRule[]> {
+    return await db.select().from(discountRules).orderBy(desc(discountRules.createdAt));
+  }
+
+  async getActiveDiscountRules(): Promise<DiscountRule[]> {
+    const today = new Date().toISOString().split('T')[0];
+    return await db
+      .select()
+      .from(discountRules)
+      .where(
+        and(
+          eq(discountRules.isActive, true),
+          sql`${discountRules.startDate} <= ${today}`,
+          sql`(${discountRules.endDate} IS NULL OR ${discountRules.endDate} >= ${today})`
+        )
+      )
+      .orderBy(desc(discountRules.createdAt));
+  }
+
+  async createDiscountRule(rule: InsertDiscountRule): Promise<DiscountRule> {
+    const [newRule] = await db.insert(discountRules).values(rule).returning();
+    return newRule;
+  }
+
+  async updateDiscountRule(id: number, rule: Partial<InsertDiscountRule>): Promise<DiscountRule> {
+    const [updated] = await db
+      .update(discountRules)
+      .set({ ...rule, updatedAt: new Date() })
+      .where(eq(discountRules.id, id))
+      .returning();
+    return updated;
+  }
+
+  // Payment transaction operations
+  async getPaymentTransactions(purchaseOrderId: number): Promise<PaymentTransaction[]> {
+    return await db
+      .select()
+      .from(paymentTransactions)
+      .where(eq(paymentTransactions.purchaseOrderId, purchaseOrderId))
+      .orderBy(desc(paymentTransactions.createdAt));
+  }
+
+  async createPaymentTransaction(transaction: InsertPaymentTransaction): Promise<PaymentTransaction> {
+    const [newTransaction] = await db.insert(paymentTransactions).values(transaction).returning();
+    return newTransaction;
   }
 
   // Saving Scheme operations
@@ -942,7 +1041,7 @@ export class DatabaseStorage implements IStorage {
 
     // Simple stock value calculation - would be more complex in real implementation
     const [stockValueResult] = await db
-      .select({ value: sql<number>`coalesce(sum(cast(${products.weight} as numeric) * 5000), 0)` })
+      .select({ value: sql<number>`coalesce(sum(cast(${products.netWeight} as numeric) * 5000), 0)` })
       .from(products);
 
     return {

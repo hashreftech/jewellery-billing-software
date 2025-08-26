@@ -90,13 +90,16 @@ export const products = pgTable("products", {
   name: varchar("name").notNull(),
   barcodeNumber: varchar("barcode_number").notNull().unique(),
   type: varchar("type").notNull(), // No stone, Stone, Diamond Stone
-  stoneWeight:decimal("stone_weight", { precision: 12, scale: 2 }), 
+  purity: varchar("purity").notNull(), // 22kt, 24kt, 18kt, etc.
+  stoneWeight: decimal("stone_weight", { precision: 12, scale: 3 }), 
+  netWeight: decimal("net_weight", { precision: 12, scale: 3 }).notNull(), // Pure gold weight
+  grossWeight: decimal("gross_weight", { precision: 12, scale: 3 }).notNull(), // Total weight including stones
   dealerId: integer("dealer_id").references(() => dealers.id).notNull(),
-  weight: decimal("weight", { precision: 12, scale: 2 }), 
   makingChargeType: varchar("making_charge_type"), // Percentage, Fixed Amount, Per Gram
   makingChargeValue: decimal("making_charge_value", { precision: 12, scale: 2 }), 
   wastageChargeType: varchar("wastage_charge_type"), // Percentage, Fixed Amount, Per Gram, Per Piece
-  wastageChargeValue:  decimal("wastage_charge_value", { precision: 12, scale: 2 }), 
+  wastageChargeValue: decimal("wastage_charge_value", { precision: 12, scale: 2 }), 
+  additionalCost: decimal("additional_cost", { precision: 12, scale: 2 }).default("0"), // Additional charges
   centralGovtNumber: varchar("central_govt_number"),
   categoryId: integer("category_id").references(() => productCategories.id),
   createdAt: timestamp("created_at").defaultNow(),
@@ -119,11 +122,25 @@ export const priceMaster = pgTable("price_master", {
 export const purchaseOrders = pgTable("purchase_orders", {
   id: serial("id").primaryKey(),
   orderNumber: varchar("order_number").notNull().unique(), // Auto-generated: PO-YYYYMMDD-###
+  invoiceNumber: varchar("invoice_number").unique(), // For invoices: INV-YYYYMMDD-###
   customerId: integer("customer_id").references(() => customers.id).notNull(),
   orderDate: date("order_date").notNull(),
-  status: varchar("status").notNull().default("pending"), // pending/confirmed/shipped/received/cancelled
+  dueDate: date("due_date"), // Payment due date
+  billerName: varchar("biller_name"), // Employee who created the bill
+  status: varchar("status").notNull().default("pending"), // pending/confirmed/shipped/received/cancelled/invoiced
+  subTotal: decimal("sub_total", { precision: 12, scale: 2 }).notNull(), // Before discounts
+  totalMakingCharges: decimal("total_making_charges", { precision: 12, scale: 2 }).default("0"),
+  makingChargeDiscount: decimal("making_charge_discount", { precision: 12, scale: 2 }).default("0"),
+  makingChargeDiscountPercentage: decimal("making_charge_discount_percentage", { precision: 5, scale: 2 }).default("0"),
+  totalGoldGrossWeight: decimal("total_gold_gross_weight", { precision: 12, scale: 3 }).notNull(),
+  goldValueDiscountPerGram: decimal("gold_value_discount_per_gram", { precision: 10, scale: 2 }).default("0"),
+  totalGoldValueDiscount: decimal("total_gold_value_discount", { precision: 12, scale: 2 }).default("0"),
+  totalDiscountAmount: decimal("total_discount_amount", { precision: 12, scale: 2 }).default("0"),
   totalAmount: decimal("total_amount", { precision: 12, scale: 2 }).notNull(),
-  discount: decimal("discount", { precision: 10, scale: 2 }).default("0"), // Optional discount applied
+  advanceAmount: decimal("advance_amount", { precision: 12, scale: 2 }).default("0"), // Amount paid in advance
+  outstandingAmount: decimal("outstanding_amount", { precision: 12, scale: 2 }).default("0"), // Remaining amount
+  grandTotal: decimal("grand_total", { precision: 12, scale: 2 }).notNull(), // Final amount after advance
+  gstAmount: decimal("gst_amount", { precision: 12, scale: 2 }).notNull(), // Total GST amount
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
   createdBy: integer("created_by").references(() => employees.id).notNull(), // Employee who created the order
@@ -136,11 +153,16 @@ export const purchaseOrderItems = pgTable("purchase_order_items", {
   purchaseOrderId: integer("purchase_order_id").references(() => purchaseOrders.id).notNull(),
   productId: integer("product_id").references(() => products.id).notNull(),
   quantity: integer("quantity").notNull(),
-  weight: decimal("weight", { precision: 12, scale: 2 }).notNull(), // Product weight at order time
-  pricePerGram: decimal("price_per_gram", { precision: 10, scale: 2 }).notNull(), // Price at order time
-  basePrice: decimal("base_price", { precision: 12, scale: 2 }).notNull(), // pricePerGram * weight
-  taxAmount: decimal("tax_amount", { precision: 12, scale: 2 }).notNull(), // Calculated tax amount
-  finalPrice: decimal("final_price", { precision: 12, scale: 2 }).notNull(), // basePrice + taxAmount
+  purity: varchar("purity").notNull(), // Gold purity at time of order
+  goldRatePerGram: decimal("gold_rate_per_gram", { precision: 10, scale: 2 }).notNull(), // Gold rate at order time
+  netWeight: decimal("net_weight", { precision: 12, scale: 3 }).notNull(), // Pure gold weight
+  grossWeight: decimal("gross_weight", { precision: 12, scale: 3 }).notNull(), // Total weight
+  labourRatePerGram: decimal("labour_rate_per_gram", { precision: 10, scale: 2 }).notNull(), // Labour charges
+  additionalCost: decimal("additional_cost", { precision: 12, scale: 2 }).default("0"), // Additional charges
+  basePrice: decimal("base_price", { precision: 12, scale: 2 }).notNull(), // goldRate * netWeight + labour + additional
+  gstPercentage: decimal("gst_percentage", { precision: 5, scale: 2 }).notNull(), // GST percentage
+  gstAmount: decimal("gst_amount", { precision: 12, scale: 2 }).notNull(), // Calculated GST amount
+  totalPrice: decimal("total_price", { precision: 12, scale: 2 }).notNull(), // basePrice + gstAmount
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -153,6 +175,53 @@ export const purchaseOrderAuditLog = pgTable("purchase_order_audit_log", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
   changes: jsonb("changes").notNull(), // JSON detailing what was changed
   createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Payment Transactions table (for tracking advance payments and settlements)
+export const paymentTransactions = pgTable("payment_transactions", {
+  id: serial("id").primaryKey(),
+  purchaseOrderId: integer("purchase_order_id").references(() => purchaseOrders.id).notNull(),
+  paymentMethod: varchar("payment_method").notNull(), // cash, card, upi, cheque, bank_transfer
+  amount: decimal("amount", { precision: 12, scale: 2 }).notNull(),
+  paymentDate: date("payment_date").notNull(),
+  transactionReference: varchar("transaction_reference"), // Cheque number, UPI reference, etc.
+  notes: text("notes"),
+  processedBy: integer("processed_by").references(() => employees.id).notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Discount Rules table (for managing different types of discounts)
+export const discountRules = pgTable("discount_rules", {
+  id: serial("id").primaryKey(),
+  name: varchar("name").notNull(),
+  type: varchar("type").notNull(), // making_charge, gold_value, item_total, order_total
+  calculationType: varchar("calculation_type").notNull(), // percentage, fixed_amount, per_gram
+  value: decimal("value", { precision: 12, scale: 2 }).notNull(),
+  minOrderAmount: decimal("min_order_amount", { precision: 12, scale: 2 }),
+  maxDiscountAmount: decimal("max_discount_amount", { precision: 12, scale: 2 }),
+  applicableCategories: integer("applicable_categories").array(), // Array of category IDs
+  startDate: date("start_date").notNull(),
+  endDate: date("end_date"),
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Company Settings table (for invoice header information)
+export const companySettings = pgTable("company_settings", {
+  id: serial("id").primaryKey(),
+  companyName: varchar("company_name").notNull(),
+  address: text("address").notNull(),
+  gstNumber: varchar("gst_number").notNull(),
+  website: varchar("website"),
+  phone: varchar("phone").notNull(),
+  email: varchar("email").notNull(),
+  logo: varchar("logo"), // Logo file path
+  invoiceTerms: text("invoice_terms"), // Terms and conditions
+  bankDetails: jsonb("bank_details"), // Bank account information
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
 });
 
 // Stock Movements table
@@ -246,6 +315,7 @@ export const purchaseOrdersRelations = relations(purchaseOrders, ({ one, many })
   }),
   items: many(purchaseOrderItems),
   auditLogs: many(purchaseOrderAuditLog),
+  paymentTransactions: many(paymentTransactions),
 }));
 
 export const purchaseOrderItemsRelations = relations(purchaseOrderItems, ({ one }) => ({
@@ -266,6 +336,17 @@ export const purchaseOrderAuditLogRelations = relations(purchaseOrderAuditLog, (
   }),
   updatedBy: one(employees, {
     fields: [purchaseOrderAuditLog.updatedBy],
+    references: [employees.id],
+  }),
+}));
+
+export const paymentTransactionsRelations = relations(paymentTransactions, ({ one }) => ({
+  purchaseOrder: one(purchaseOrders, {
+    fields: [paymentTransactions.purchaseOrderId],
+    references: [purchaseOrders.id],
+  }),
+  processedBy: one(employees, {
+    fields: [paymentTransactions.processedBy],
     references: [employees.id],
   }),
 }));
@@ -303,10 +384,12 @@ export const insertProductSchema = createInsertSchema(products).omit({
   createdAt: true, 
   updatedAt: true 
 }).extend({
-  stoneWeight: z.union([z.string().regex(/^\d+(\.\d{1,2})?$/), z.number()]).optional(),
-  weight: z.union([z.string().regex(/^\d+(\.\d{1,2})?$/), z.number()]).optional(),
+  stoneWeight: z.union([z.string().regex(/^\d+(\.\d{1,3})?$/), z.number()]).optional(),
+  netWeight: z.union([z.string().regex(/^\d+(\.\d{1,3})?$/), z.number()]),
+  grossWeight: z.union([z.string().regex(/^\d+(\.\d{1,3})?$/), z.number()]),
   makingChargeValue: z.union([z.string().regex(/^\d+(\.\d{1,2})?$/), z.number()]).optional(),
   wastageChargeValue: z.union([z.string().regex(/^\d+(\.\d{1,2})?$/), z.number()]).optional(),
+  additionalCost: z.union([z.string().regex(/^\d+(\.\d{1,2})?$/), z.number()]).optional(),
   dealerId: z.number().int(),
   categoryId: z.number().int().optional()
 });
@@ -314,10 +397,13 @@ export const insertPriceMasterSchema = createInsertSchema(priceMaster).omit({ id
 export const insertPurchaseOrderSchema = createInsertSchema(purchaseOrders).omit({ id: true, orderNumber: true, createdAt: true, updatedAt: true });
 export const insertPurchaseOrderItemSchema = createInsertSchema(purchaseOrderItems).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertPurchaseOrderAuditLogSchema = createInsertSchema(purchaseOrderAuditLog).omit({ id: true, createdAt: true });
+export const insertPaymentTransactionSchema = createInsertSchema(paymentTransactions).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertDiscountRuleSchema = createInsertSchema(discountRules).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertCompanySettingsSchema = createInsertSchema(companySettings).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertMonthlyPaymentSchema = createInsertSchema(monthlyPayments).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertStockMovementSchema = createInsertSchema(stockMovements).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertSavingSchemeSchema = createInsertSchema(savingSchemeMaster).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertCustomerEnrollmentSchema = createInsertSchema(customerEnrollments).omit({ id: true, cardNumber: true, createdAt: true, updatedAt: true });
-export const insertMonthlyPaymentSchema = createInsertSchema(monthlyPayments).omit({ id: true, createdAt: true, updatedAt: true });
 
 // Types  
 export type InsertEmployee = z.infer<typeof insertEmployeeSchema>;
@@ -358,3 +444,12 @@ export type CustomerEnrollment = typeof customerEnrollments.$inferSelect;
 
 export type InsertMonthlyPayment = z.infer<typeof insertMonthlyPaymentSchema>;
 export type MonthlyPayment = typeof monthlyPayments.$inferSelect;
+
+export type InsertPaymentTransaction = z.infer<typeof insertPaymentTransactionSchema>;
+export type PaymentTransaction = typeof paymentTransactions.$inferSelect;
+
+export type InsertDiscountRule = z.infer<typeof insertDiscountRuleSchema>;
+export type DiscountRule = typeof discountRules.$inferSelect;
+
+export type InsertCompanySettings = z.infer<typeof insertCompanySettingsSchema>;
+export type CompanySettings = typeof companySettings.$inferSelect;

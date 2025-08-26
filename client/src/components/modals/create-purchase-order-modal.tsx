@@ -25,11 +25,24 @@ interface PurchaseOrderItem {
   productId: number;
   product?: Product & { category?: ProductCategory };
   quantity: number;
-  weight: number;
+  weight: number; // Keep as netWeight for backward compatibility
   pricePerGram: number;
   basePrice: number;
   taxAmount: number;
   finalPrice: number;
+  // Additional detailed fields (optional for now)
+  grossWeight?: number;
+  stoneWeight?: number;
+  netWeight?: number;
+  goldCost?: number;
+  stoneCost?: number;
+  wastagePercentage?: number;
+  wastageAmount?: number;
+  wastageChargeType?: string;
+  wastageChargeValue?: number;
+  makingChargeType?: string;
+  makingChargeValue?: number;
+  labourCharges?: number;
 }
 
 interface CreatePurchaseOrderModalProps {
@@ -94,24 +107,30 @@ export default function CreatePurchaseOrderModal({ isOpen, onClose }: CreatePurc
   });
 
   // Auto-calculate price based on product weight and current price
-  const calculateItemPricing = async (productId: number, quantity: number, weight: number) => {
+  const calculateItemPricing = async (productId: number, quantity: number, weight: number, productData?: any) => {
     try {
       console.log('=== Starting Price Calculation ===');
       console.log('Product ID:', productId, 'Quantity:', quantity, 'Weight:', weight);
       
-      // Find product in search results
-      const product = (productSearchResults as any[]).find((p: any) => p.id === productId);
+      // Use provided product data or find product in search results
+      let product = productData;
+      if (!product) {
+        product = (productSearchResults as any[]).find((p: any) => p.id === productId);
+      }
       
       if (!product) {
         console.error('Product not found in search results for ID:', productId);
         throw new Error('Product not found');
       }
       
-      console.log('Found product:', {
+      console.log('Found product for calculation:', {
         id: product.id,
         name: product.name,
         categoryId: product.categoryId,
-        category: product.category
+        category: product.category,
+        weight: product.weight,
+        grossWeight: product.grossWeight,
+        stoneWeight: product.stoneWeight
       });
       
       // Validate category structure
@@ -167,21 +186,87 @@ export default function CreatePurchaseOrderModal({ isOpen, onClose }: CreatePurc
         throw new Error(`Invalid weight: ${weight}`);
       }
       
-      // Calculate pricing
-      const basePrice = pricePerGram * weight;
+      // Calculate detailed pricing breakdown using product's actual weight specifications
+      // The API might return different field names than expected
+      const productGrossWeight = product.grossWeight ? parseFloat(product.grossWeight.toString()) : 0;
+      const productNetWeight = (product.netWeight || product.weight) ? parseFloat((product.netWeight || product.weight).toString()) : 0;
+      const productStoneWeight = product.stoneWeight ? parseFloat(product.stoneWeight.toString()) : 0;
+      
+      // Use the product's actual weights, not the calculated ones
+      const grossWeight = productGrossWeight || (productNetWeight + productStoneWeight) || weight; // fallback to provided weight if no product weights
+      const stoneWeight = productStoneWeight;
+      const netWeight = productNetWeight || (grossWeight - stoneWeight);
+      
+      console.log('Using product weights - Gross:', grossWeight, 'Stone:', stoneWeight, 'Net:', netWeight);
+      
+      // Gold cost calculation
+      const goldCost = netWeight * pricePerGram;
+      
+      // Stone cost calculation (example: 10% of gold cost)
+      const stoneCost = stoneWeight > 0 ? (stoneWeight * pricePerGram * 0.1) : 0;
+      
+      // Wastage calculation using product's actual configuration
+      let wastageAmount = 0;
+      const wastageChargeType = product.wastageChargeType;
+      const wastageChargeValue = parseFloat(String(product.wastageChargeValue || '0'));
+      
+      console.log('Product wastage config - Type:', wastageChargeType, 'Value:', wastageChargeValue);
+      
+      if (wastageChargeType === "Percentage") {
+        wastageAmount = goldCost * (wastageChargeValue / 100);
+      } else if (wastageChargeType === "Per Gram") {
+        wastageAmount = netWeight * wastageChargeValue;
+      } else if (wastageChargeType === "Fixed Amount") {
+        wastageAmount = wastageChargeValue;
+      } else if (wastageChargeType === "Per Piece") {
+        wastageAmount = quantity * wastageChargeValue;
+      }
+      
+      // Making charges using product's actual configuration
+      let labourCharges = 0;
+      const makingChargeType = product.makingChargeType;
+      const makingChargeValue = parseFloat(String(product.makingChargeValue || '0'));
+      
+      console.log('Product making charge config - Type:', makingChargeType, 'Value:', makingChargeValue);
+      
+      if (makingChargeType === "Percentage") {
+        labourCharges = goldCost * (makingChargeValue / 100);
+      } else if (makingChargeType === "Per Gram") {
+        labourCharges = netWeight * makingChargeValue;
+      } else if (makingChargeType === "Fixed Amount") {
+        labourCharges = makingChargeValue;
+      }
+      
+      // Base price calculation
+      const basePrice = goldCost + stoneCost + wastageAmount + labourCharges;
       const taxAmount = basePrice * (taxPercentage / 100);
       const finalPrice = basePrice + taxAmount;
       
-      console.log('=== Price Calculation Results ===');
-      console.log('Price per gram:', pricePerGram);
-      console.log('Weight:', weight);
+      console.log('=== Detailed Price Calculation Results ===');
+      console.log('Gross weight:', grossWeight);
+      console.log('Stone weight:', stoneWeight);
+      console.log('Net weight:', netWeight);
+      console.log('Gold cost:', goldCost);
+      console.log('Stone cost:', stoneCost);
+      console.log('Wastage amount:', wastageAmount, `(${wastageChargeType}: ${wastageChargeValue})`);
+      console.log('Labour charges:', labourCharges, `(${makingChargeType}: ${makingChargeValue})`);
       console.log('Base price:', basePrice);
-      console.log('Tax percentage:', taxPercentage);
-      console.log('Tax amount:', taxAmount);
+      console.log('Tax amount:', taxAmount, `(${taxPercentage}%)`);
       console.log('Final price:', finalPrice);
       
       const result = {
         pricePerGram,
+        grossWeight,
+        stoneWeight,
+        netWeight,
+        goldCost,
+        stoneCost,
+        wastageChargeType,
+        wastageChargeValue,
+        wastageAmount,
+        makingChargeType,
+        makingChargeValue,
+        labourCharges,
         basePrice,
         taxAmount,
         finalPrice,
@@ -207,11 +292,32 @@ export default function CreatePurchaseOrderModal({ isOpen, onClose }: CreatePurc
   };
 
   // Add product to order
-  const addProduct = async (product: Product & { category?: ProductCategory }) => {
-    const defaultWeight = Number(product.weight) || 1;
+  const addProduct = async (product: any) => {
+    console.log('=== Adding Product to Order ===');
+    console.log('Product:', product.name);
+    console.log('All product fields:', product);
+    
+    // Handle string to number conversion for decimal fields from database
+    // The API might return netWeight as 'weight' field or as 'netWeight' field
+    const netWeightValue = (product.weight || product.netWeight) ? parseFloat((product.weight || product.netWeight).toString()) : 0;
+    const grossWeightValue = product.grossWeight ? parseFloat(product.grossWeight.toString()) : 0;
+    const stoneWeightValue = product.stoneWeight ? parseFloat(product.stoneWeight.toString()) : 0;
+    
+    console.log('Parsed weights:');
+    console.log('- API weight field:', product.weight, '(should be netWeight)');
+    console.log('- API netWeight field:', product.netWeight);
+    console.log('- API grossWeight field:', product.grossWeight);
+    console.log('- API stoneWeight field:', product.stoneWeight);
+    console.log('- Parsed netWeight:', netWeightValue);
+    console.log('- Parsed grossWeight:', grossWeightValue);
+    console.log('- Parsed stoneWeight:', stoneWeightValue);
+    
+    const defaultWeight = netWeightValue > 0 ? netWeightValue : 1; // Use netWeight as the main weight
     const defaultQuantity = 1;
     
-    const pricing = await calculateItemPricing(product.id, defaultQuantity, defaultWeight);
+    console.log('Using weight for calculation:', defaultWeight);
+    
+    const pricing = await calculateItemPricing(product.id, defaultQuantity, defaultWeight, product);
     if (!pricing) {
       toast({
         title: 'Error',
@@ -227,6 +333,10 @@ export default function CreatePurchaseOrderModal({ isOpen, onClose }: CreatePurc
       quantity: defaultQuantity,
       weight: defaultWeight,
       ...pricing,
+      // Override with the correct parsed values to ensure UI displays correctly
+      stoneWeight: stoneWeightValue,
+      grossWeight: grossWeightValue,
+      netWeight: netWeightValue,
     };
 
     setItems(prev => [...prev, newItem]);
@@ -240,7 +350,7 @@ export default function CreatePurchaseOrderModal({ isOpen, onClose }: CreatePurc
     const updatedItem = { ...item, [field]: value };
     
     if (field === 'weight' || field === 'quantity') {
-      const pricing = await calculateItemPricing(item.productId, updatedItem.quantity, updatedItem.weight);
+      const pricing = await calculateItemPricing(item.productId, updatedItem.quantity, updatedItem.weight, item.product);
       if (pricing) {
         Object.assign(updatedItem, pricing);
       }
@@ -260,6 +370,7 @@ export default function CreatePurchaseOrderModal({ isOpen, onClose }: CreatePurc
   const calculateTotals = () => {
     const subtotal = items.reduce((sum, item) => sum + (item.finalPrice * item.quantity), 0);
     const totalTax = items.reduce((sum, item) => sum + (item.taxAmount * item.quantity), 0);
+    const totalGoldGrossWeight = items.reduce((sum, item) => sum + (item.weight * item.quantity), 0);
     
     let discountAmount = 0;
     if (discountType === 'percentage') {
@@ -273,6 +384,7 @@ export default function CreatePurchaseOrderModal({ isOpen, onClose }: CreatePurc
     return {
       subtotal,
       totalTax,
+      totalGoldGrossWeight,
       discountAmount,
       grandTotal,
     };
@@ -298,12 +410,16 @@ export default function CreatePurchaseOrderModal({ isOpen, onClose }: CreatePurc
       return;
     }
 
-    const { discountAmount } = calculateTotals();
+    const { subtotal, totalTax, totalGoldGrossWeight, discountAmount, grandTotal } = calculateTotals();
 
     const orderData = {
       customerId: selectedCustomer.id,
       orderDate,
       status,
+      subTotal: subtotal.toString(),
+      totalGoldGrossWeight: totalGoldGrossWeight.toString(),
+      grandTotal: grandTotal.toString(),
+      gstAmount: totalTax.toString(),
       items: items.map(item => ({
         productId: item.productId,
         quantity: item.quantity,
@@ -316,6 +432,9 @@ export default function CreatePurchaseOrderModal({ isOpen, onClose }: CreatePurc
       discount: discountAmount,
     };
 
+    console.log('=== Creating Purchase Order ===');
+    console.log('Order Data:', orderData);
+    
     createMutation.mutate(orderData);
   };
 
@@ -471,7 +590,7 @@ export default function CreatePurchaseOrderModal({ isOpen, onClose }: CreatePurc
                             <div>
                               <div className="font-medium">{product.name}</div>
                               <div className="text-sm text-gray-500">
-                                {product.barcodeNumber} • Weight: {product.weight}g
+                                {product.barcodeNumber} • Net: {product.netWeight}g, Gross: {product.grossWeight}g
                               </div>
                               {product.category && (
                                 <Badge variant="outline" className="mt-1">
@@ -497,73 +616,127 @@ export default function CreatePurchaseOrderModal({ isOpen, onClose }: CreatePurc
             <div className="space-y-4">
               <Label>Order Items ({items.length})</Label>
               <div className="border rounded-lg">
-                <div className="grid grid-cols-8 gap-2 p-3 bg-gray-50 text-sm font-medium border-b">
-                  <div>Product</div>
-                  <div>Weight (g)</div>
-                  <div>Price/g</div>
-                  <div>Base Price</div>
-                  <div>Tax</div>
-                  <div>Final Price</div>
+                <div className="grid grid-cols-10 gap-2 p-3 bg-gray-50 text-sm font-medium border-b">
+                  <div className="col-span-2">Product</div>
+                  <div>Net Wt (g)</div>
+                  <div>Gross Wt (g)</div>
+                  <div>Stone Wt (g)</div>
+                  <div>Gold Rate/g</div>
+                  <div>Labour</div>
+                  <div>GST</div>
                   <div>Qty</div>
-                  <div>Subtotal</div>
+                  <div>Total</div>
                 </div>
                 
-                {items.map((item, index) => (
-                  <div key={index} className="grid grid-cols-8 gap-2 p-3 border-b last:border-b-0 items-center">
-                    <div>
-                      <div className="font-medium text-sm">{item.product?.name}</div>
-                      <div className="text-xs text-gray-500">{item.product?.barcodeNumber}</div>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => removeItem(index)}
-                        className="text-red-500 p-0 h-auto mt-1"
-                      >
-                        <X className="w-3 h-3" />
-                      </Button>
+                {items.map((item, index) => {
+                  const grossWeight = item.grossWeight || item.weight;
+                  const stoneWeight = item.stoneWeight || (item.product?.stoneWeight ? parseFloat(item.product.stoneWeight) : 0);
+                  const netWeight = item.netWeight || item.weight;
+                  const goldCost = (netWeight * item.pricePerGram);
+                  const labourCharges = item.labourCharges || 0;
+                  
+                  return (
+                    <div key={index} className="border-b last:border-b-0">
+                      {/* Main item row */}
+                      <div className="grid grid-cols-10 gap-2 p-3 items-center">
+                        <div className="col-span-2">
+                          <div className="font-medium text-sm">{item.product?.name}</div>
+                          <div className="text-xs text-gray-500">{item.product?.barcodeNumber}</div>
+                          <div className="text-xs text-blue-600">{item.product?.purity || '22K'}</div>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => removeItem(index)}
+                            className="text-red-500 p-0 h-auto mt-1"
+                          >
+                            <X className="w-3 h-3" />
+                          </Button>
+                        </div>
+                        
+                        <div>
+                          <div className="text-sm font-medium text-green-600">
+                            {netWeight.toFixed(3)}g
+                          </div>
+                        </div>
+                        
+                        <div>
+                          <Input
+                            type="number"
+                            step="0.001"
+                            value={grossWeight}
+                            onChange={(e) => {
+                              const newGrossWeight = Number(e.target.value);
+                              updateItem(index, 'weight', newGrossWeight);
+                            }}
+                            className="text-sm w-20"
+                          />
+                        </div>
+                        
+                        <div>
+                          <div className="text-sm text-amber-600">
+                            {stoneWeight.toFixed(3)}g
+                          </div>
+                        </div>
+                        
+                        <div className="text-sm">
+                          {formatCurrency(item.pricePerGram)}
+                        </div>
+                        
+                        <div className="text-sm text-blue-600">
+                          {formatCurrency(labourCharges)}
+                        </div>
+                        
+                        <div className="text-sm text-green-600">
+                          {formatCurrency(item.taxAmount)}
+                        </div>
+                        
+                        <div>
+                          <Input
+                            type="number"
+                            min="1"
+                            value={item.quantity}
+                            onChange={(e) => updateItem(index, 'quantity', Number(e.target.value))}
+                            className="text-sm w-16"
+                          />
+                        </div>
+                        
+                        <div className="text-sm font-medium">
+                          {formatCurrency(item.finalPrice * item.quantity)}
+                        </div>
+                      </div>
+                      
+                      {/* Detailed breakdown row */}
+                      <div className="px-3 pb-3 bg-gray-50/50">
+                        <div className="grid grid-cols-6 gap-4 text-xs text-gray-600">
+                          <div>
+                            <span className="font-medium">Gold Cost:</span><br/>
+                            {formatCurrency(goldCost)} ({netWeight.toFixed(3)}g × {formatCurrency(item.pricePerGram)})
+                          </div>
+                          <div>
+                            <span className="font-medium">Stone Cost:</span><br/>
+                            {formatCurrency(item.stoneCost || 0)}
+                          </div>
+                          <div>
+                            <span className="font-medium">Wastage:</span><br/>
+                            {formatCurrency(item.wastageAmount || 0)} ({item.wastageChargeType === 'Percentage' ? `${item.wastageChargeValue || 0}%` : item.wastageChargeType})
+                          </div>
+                          <div>
+                            <span className="font-medium">Making Charges:</span><br/>
+                            {formatCurrency(item.labourCharges || 0)} ({item.makingChargeType === 'Percentage' ? `${item.makingChargeValue || 0}%` : item.makingChargeType})
+                          </div>
+                          <div>
+                            <span className="font-medium">Base Price:</span><br/>
+                            {formatCurrency(item.basePrice)}
+                          </div>
+                          <div>
+                            <span className="font-medium">Final Price:</span><br/>
+                            <span className="font-semibold text-lg">{formatCurrency(item.finalPrice)}</span>
+                          </div>
+                        </div>
+                      </div>
                     </div>
-                    
-                    <div>
-                      <Input
-                        type="number"
-                        step="0.01"
-                        value={item.weight}
-                        onChange={(e) => updateItem(index, 'weight', Number(e.target.value))}
-                        className="text-sm"
-                      />
-                    </div>
-                    
-                    <div className="text-sm">
-                      {formatCurrency(item.pricePerGram)}
-                    </div>
-                    
-                    <div className="text-sm">
-                      {formatCurrency(item.basePrice)}
-                    </div>
-                    
-                    <div className="text-sm text-green-600">
-                      {formatCurrency(item.taxAmount)}
-                    </div>
-                    
-                    <div className="text-sm font-medium">
-                      {formatCurrency(item.finalPrice)}
-                    </div>
-                    
-                    <div>
-                      <Input
-                        type="number"
-                        min="1"
-                        value={item.quantity}
-                        onChange={(e) => updateItem(index, 'quantity', Number(e.target.value))}
-                        className="text-sm"
-                      />
-                    </div>
-                    
-                    <div className="text-sm font-medium">
-                      {formatCurrency(item.finalPrice * item.quantity)}
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}
@@ -610,6 +783,11 @@ export default function CreatePurchaseOrderModal({ isOpen, onClose }: CreatePurc
               {/* Totals */}
               <Card className="bg-gray-50">
                 <CardContent className="p-4 space-y-2">
+                  <div className="flex justify-between text-sm">
+                    <span>Total Weight:</span>
+                    <span className="text-blue-600 font-medium">{totals.totalGoldGrossWeight.toFixed(3)}g</span>
+                  </div>
+                  <Separator />
                   <div className="flex justify-between text-sm">
                     <span>Subtotal (Before Tax):</span>
                     <span>{formatCurrency(totals.subtotal - totals.totalTax)}</span>

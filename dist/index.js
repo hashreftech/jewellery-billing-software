@@ -28,7 +28,9 @@ var init_constants = __esm({
       "CAT-GOLD22K",
       "CAT-GOLD18K",
       "CAT-SILVER",
-      "CAT-DIAMOND"
+      "CAT-DIAMOND",
+      // Include platinum to prevent accidental deletion of base category
+      "CAT-PLATINUM"
     ];
   }
 });
@@ -42,31 +44,44 @@ import { createServer } from "http";
 // shared/schema.ts
 var schema_exports = {};
 __export(schema_exports, {
+  companySettings: () => companySettings,
   customerEnrollments: () => customerEnrollments,
   customerEnrollmentsRelations: () => customerEnrollmentsRelations,
   customers: () => customers,
   customersRelations: () => customersRelations,
   dealers: () => dealers,
   dealersRelations: () => dealersRelations,
+  discountRules: () => discountRules,
   employees: () => employees,
+  insertCompanySettingsSchema: () => insertCompanySettingsSchema,
   insertCustomerEnrollmentSchema: () => insertCustomerEnrollmentSchema,
   insertCustomerSchema: () => insertCustomerSchema,
   insertDealerSchema: () => insertDealerSchema,
+  insertDiscountRuleSchema: () => insertDiscountRuleSchema,
   insertEmployeeSchema: () => insertEmployeeSchema,
   insertMonthlyPaymentSchema: () => insertMonthlyPaymentSchema,
+  insertPaymentTransactionSchema: () => insertPaymentTransactionSchema,
   insertPriceMasterSchema: () => insertPriceMasterSchema,
   insertProductCategorySchema: () => insertProductCategorySchema,
   insertProductSchema: () => insertProductSchema,
+  insertPurchaseOrderAuditLogSchema: () => insertPurchaseOrderAuditLogSchema,
+  insertPurchaseOrderItemSchema: () => insertPurchaseOrderItemSchema,
   insertPurchaseOrderSchema: () => insertPurchaseOrderSchema,
   insertSavingSchemeSchema: () => insertSavingSchemeSchema,
   insertStockMovementSchema: () => insertStockMovementSchema,
   monthlyPayments: () => monthlyPayments,
+  paymentTransactions: () => paymentTransactions,
+  paymentTransactionsRelations: () => paymentTransactionsRelations,
   priceMaster: () => priceMaster,
   priceMasterRelations: () => priceMasterRelations,
   productCategories: () => productCategories,
   productCategoriesRelations: () => productCategoriesRelations,
   products: () => products,
   productsRelations: () => productsRelations,
+  purchaseOrderAuditLog: () => purchaseOrderAuditLog,
+  purchaseOrderAuditLogRelations: () => purchaseOrderAuditLogRelations,
+  purchaseOrderItems: () => purchaseOrderItems,
+  purchaseOrderItemsRelations: () => purchaseOrderItemsRelations,
   purchaseOrders: () => purchaseOrders,
   purchaseOrdersRelations: () => purchaseOrdersRelations,
   savingSchemeMaster: () => savingSchemeMaster,
@@ -84,6 +99,7 @@ import {
   serial,
   integer,
   decimal,
+  boolean,
   date
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
@@ -155,15 +171,22 @@ var products = pgTable("products", {
   barcodeNumber: varchar("barcode_number").notNull().unique(),
   type: varchar("type").notNull(),
   // No stone, Stone, Diamond Stone
-  stoneWeight: decimal("stone_weight", { precision: 12, scale: 2 }),
+  purity: varchar("purity").notNull(),
+  // 22kt, 24kt, 18kt, etc.
+  stoneWeight: decimal("stone_weight", { precision: 12, scale: 3 }),
+  netWeight: decimal("net_weight", { precision: 12, scale: 3 }).notNull(),
+  // Pure gold weight
+  grossWeight: decimal("gross_weight", { precision: 12, scale: 3 }).notNull(),
+  // Total weight including stones
   dealerId: integer("dealer_id").references(() => dealers.id).notNull(),
-  weight: decimal("weight", { precision: 12, scale: 2 }),
   makingChargeType: varchar("making_charge_type"),
   // Percentage, Fixed Amount, Per Gram
   makingChargeValue: decimal("making_charge_value", { precision: 12, scale: 2 }),
   wastageChargeType: varchar("wastage_charge_type"),
   // Percentage, Fixed Amount, Per Gram, Per Piece
   wastageChargeValue: decimal("wastage_charge_value", { precision: 12, scale: 2 }),
+  additionalCost: decimal("additional_cost", { precision: 12, scale: 2 }).default("0"),
+  // Additional charges
   centralGovtNumber: varchar("central_govt_number"),
   categoryId: integer("category_id").references(() => productCategories.id),
   createdAt: timestamp("created_at").defaultNow(),
@@ -182,15 +205,125 @@ var priceMaster = pgTable("price_master", {
 var purchaseOrders = pgTable("purchase_orders", {
   id: serial("id").primaryKey(),
   orderNumber: varchar("order_number").notNull().unique(),
-  // Auto-generated
+  // Auto-generated: PO-YYYYMMDD-###
+  invoiceNumber: varchar("invoice_number").unique(),
+  // For invoices: INV-YYYYMMDD-###
   customerId: integer("customer_id").references(() => customers.id).notNull(),
-  products: jsonb("products").notNull(),
-  // Array of products with quantities
-  overallDiscount: decimal("overall_discount", { precision: 10, scale: 2 }).default("0"),
-  totalAmount: decimal("total_amount", { precision: 12, scale: 2 }).notNull(),
   orderDate: date("order_date").notNull(),
-  status: varchar("status").notNull().default("Pending"),
-  // Pending, Processing, Completed, Cancelled
+  dueDate: date("due_date"),
+  // Payment due date
+  billerName: varchar("biller_name"),
+  // Employee who created the bill
+  status: varchar("status").notNull().default("pending"),
+  // pending/confirmed/shipped/received/cancelled/invoiced
+  subTotal: decimal("sub_total", { precision: 12, scale: 2 }).notNull(),
+  // Before discounts
+  totalMakingCharges: decimal("total_making_charges", { precision: 12, scale: 2 }).default("0"),
+  makingChargeDiscount: decimal("making_charge_discount", { precision: 12, scale: 2 }).default("0"),
+  makingChargeDiscountPercentage: decimal("making_charge_discount_percentage", { precision: 5, scale: 2 }).default("0"),
+  totalGoldGrossWeight: decimal("total_gold_gross_weight", { precision: 12, scale: 3 }).notNull(),
+  goldValueDiscountPerGram: decimal("gold_value_discount_per_gram", { precision: 10, scale: 2 }).default("0"),
+  totalGoldValueDiscount: decimal("total_gold_value_discount", { precision: 12, scale: 2 }).default("0"),
+  totalDiscountAmount: decimal("total_discount_amount", { precision: 12, scale: 2 }).default("0"),
+  totalAmount: decimal("total_amount", { precision: 12, scale: 2 }).notNull(),
+  advanceAmount: decimal("advance_amount", { precision: 12, scale: 2 }).default("0"),
+  // Amount paid in advance
+  outstandingAmount: decimal("outstanding_amount", { precision: 12, scale: 2 }).default("0"),
+  // Remaining amount
+  grandTotal: decimal("grand_total", { precision: 12, scale: 2 }).notNull(),
+  // Final amount after advance
+  gstAmount: decimal("gst_amount", { precision: 12, scale: 2 }).notNull(),
+  // Total GST amount
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+  createdBy: integer("created_by").references(() => employees.id).notNull(),
+  // Employee who created the order
+  updatedBy: integer("updated_by").references(() => employees.id)
+  // Employee who last updated the order
+});
+var purchaseOrderItems = pgTable("purchase_order_items", {
+  id: serial("id").primaryKey(),
+  purchaseOrderId: integer("purchase_order_id").references(() => purchaseOrders.id).notNull(),
+  productId: integer("product_id").references(() => products.id).notNull(),
+  quantity: integer("quantity").notNull(),
+  purity: varchar("purity").notNull(),
+  // Gold purity at time of order
+  goldRatePerGram: decimal("gold_rate_per_gram", { precision: 10, scale: 2 }).notNull(),
+  // Gold rate at order time
+  netWeight: decimal("net_weight", { precision: 12, scale: 3 }).notNull(),
+  // Pure gold weight
+  grossWeight: decimal("gross_weight", { precision: 12, scale: 3 }).notNull(),
+  // Total weight
+  labourRatePerGram: decimal("labour_rate_per_gram", { precision: 10, scale: 2 }).notNull(),
+  // Labour charges
+  additionalCost: decimal("additional_cost", { precision: 12, scale: 2 }).default("0"),
+  // Additional charges
+  basePrice: decimal("base_price", { precision: 12, scale: 2 }).notNull(),
+  // goldRate * netWeight + labour + additional
+  gstPercentage: decimal("gst_percentage", { precision: 5, scale: 2 }).notNull(),
+  // GST percentage
+  gstAmount: decimal("gst_amount", { precision: 12, scale: 2 }).notNull(),
+  // Calculated GST amount
+  totalPrice: decimal("total_price", { precision: 12, scale: 2 }).notNull(),
+  // basePrice + gstAmount
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow()
+});
+var purchaseOrderAuditLog = pgTable("purchase_order_audit_log", {
+  id: serial("id").primaryKey(),
+  purchaseOrderId: integer("purchase_order_id").references(() => purchaseOrders.id).notNull(),
+  updatedBy: integer("updated_by").references(() => employees.id).notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  changes: jsonb("changes").notNull(),
+  // JSON detailing what was changed
+  createdAt: timestamp("created_at").defaultNow()
+});
+var paymentTransactions = pgTable("payment_transactions", {
+  id: serial("id").primaryKey(),
+  purchaseOrderId: integer("purchase_order_id").references(() => purchaseOrders.id).notNull(),
+  paymentMethod: varchar("payment_method").notNull(),
+  // cash, card, upi, cheque, bank_transfer
+  amount: decimal("amount", { precision: 12, scale: 2 }).notNull(),
+  paymentDate: date("payment_date").notNull(),
+  transactionReference: varchar("transaction_reference"),
+  // Cheque number, UPI reference, etc.
+  notes: text("notes"),
+  processedBy: integer("processed_by").references(() => employees.id).notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow()
+});
+var discountRules = pgTable("discount_rules", {
+  id: serial("id").primaryKey(),
+  name: varchar("name").notNull(),
+  type: varchar("type").notNull(),
+  // making_charge, gold_value, item_total, order_total
+  calculationType: varchar("calculation_type").notNull(),
+  // percentage, fixed_amount, per_gram
+  value: decimal("value", { precision: 12, scale: 2 }).notNull(),
+  minOrderAmount: decimal("min_order_amount", { precision: 12, scale: 2 }),
+  maxDiscountAmount: decimal("max_discount_amount", { precision: 12, scale: 2 }),
+  applicableCategories: integer("applicable_categories").array(),
+  // Array of category IDs
+  startDate: date("start_date").notNull(),
+  endDate: date("end_date"),
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow()
+});
+var companySettings = pgTable("company_settings", {
+  id: serial("id").primaryKey(),
+  companyName: varchar("company_name").notNull(),
+  address: text("address").notNull(),
+  gstNumber: varchar("gst_number").notNull(),
+  website: varchar("website"),
+  phone: varchar("phone").notNull(),
+  email: varchar("email").notNull(),
+  logo: varchar("logo"),
+  // Logo file path
+  invoiceTerms: text("invoice_terms"),
+  // Terms and conditions
+  bankDetails: jsonb("bank_details"),
+  // Bank account information
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow()
 });
@@ -261,10 +394,51 @@ var productsRelations = relations(products, ({ one, many }) => ({
   }),
   stockMovements: many(stockMovements)
 }));
-var purchaseOrdersRelations = relations(purchaseOrders, ({ one }) => ({
+var purchaseOrdersRelations = relations(purchaseOrders, ({ one, many }) => ({
   customer: one(customers, {
     fields: [purchaseOrders.customerId],
     references: [customers.id]
+  }),
+  creator: one(employees, {
+    fields: [purchaseOrders.createdBy],
+    references: [employees.id]
+  }),
+  updater: one(employees, {
+    fields: [purchaseOrders.updatedBy],
+    references: [employees.id]
+  }),
+  items: many(purchaseOrderItems),
+  auditLogs: many(purchaseOrderAuditLog),
+  paymentTransactions: many(paymentTransactions)
+}));
+var purchaseOrderItemsRelations = relations(purchaseOrderItems, ({ one }) => ({
+  purchaseOrder: one(purchaseOrders, {
+    fields: [purchaseOrderItems.purchaseOrderId],
+    references: [purchaseOrders.id]
+  }),
+  product: one(products, {
+    fields: [purchaseOrderItems.productId],
+    references: [products.id]
+  })
+}));
+var purchaseOrderAuditLogRelations = relations(purchaseOrderAuditLog, ({ one }) => ({
+  purchaseOrder: one(purchaseOrders, {
+    fields: [purchaseOrderAuditLog.purchaseOrderId],
+    references: [purchaseOrders.id]
+  }),
+  updatedBy: one(employees, {
+    fields: [purchaseOrderAuditLog.updatedBy],
+    references: [employees.id]
+  })
+}));
+var paymentTransactionsRelations = relations(paymentTransactions, ({ one }) => ({
+  purchaseOrder: one(purchaseOrders, {
+    fields: [paymentTransactions.purchaseOrderId],
+    references: [purchaseOrders.id]
+  }),
+  processedBy: one(employees, {
+    fields: [paymentTransactions.processedBy],
+    references: [employees.id]
   })
 }));
 var savingSchemeMasterRelations = relations(savingSchemeMaster, ({ one, many }) => ({
@@ -296,19 +470,26 @@ var insertProductSchema = createInsertSchema(products).omit({
   createdAt: true,
   updatedAt: true
 }).extend({
-  stoneWeight: z.union([z.string().regex(/^\d+(\.\d{1,2})?$/), z.number()]).optional(),
-  weight: z.union([z.string().regex(/^\d+(\.\d{1,2})?$/), z.number()]).optional(),
+  stoneWeight: z.union([z.string().regex(/^\d+(\.\d{1,3})?$/), z.number()]).optional(),
+  netWeight: z.union([z.string().regex(/^\d+(\.\d{1,3})?$/), z.number()]),
+  grossWeight: z.union([z.string().regex(/^\d+(\.\d{1,3})?$/), z.number()]),
   makingChargeValue: z.union([z.string().regex(/^\d+(\.\d{1,2})?$/), z.number()]).optional(),
   wastageChargeValue: z.union([z.string().regex(/^\d+(\.\d{1,2})?$/), z.number()]).optional(),
+  additionalCost: z.union([z.string().regex(/^\d+(\.\d{1,2})?$/), z.number()]).optional(),
   dealerId: z.number().int(),
   categoryId: z.number().int().optional()
 });
 var insertPriceMasterSchema = createInsertSchema(priceMaster).omit({ id: true, createdAt: true, updatedAt: true });
 var insertPurchaseOrderSchema = createInsertSchema(purchaseOrders).omit({ id: true, orderNumber: true, createdAt: true, updatedAt: true });
+var insertPurchaseOrderItemSchema = createInsertSchema(purchaseOrderItems).omit({ id: true, createdAt: true, updatedAt: true });
+var insertPurchaseOrderAuditLogSchema = createInsertSchema(purchaseOrderAuditLog).omit({ id: true, createdAt: true });
+var insertPaymentTransactionSchema = createInsertSchema(paymentTransactions).omit({ id: true, createdAt: true, updatedAt: true });
+var insertDiscountRuleSchema = createInsertSchema(discountRules).omit({ id: true, createdAt: true, updatedAt: true });
+var insertCompanySettingsSchema = createInsertSchema(companySettings).omit({ id: true, createdAt: true, updatedAt: true });
+var insertMonthlyPaymentSchema = createInsertSchema(monthlyPayments).omit({ id: true, createdAt: true, updatedAt: true });
 var insertStockMovementSchema = createInsertSchema(stockMovements).omit({ id: true, createdAt: true, updatedAt: true });
 var insertSavingSchemeSchema = createInsertSchema(savingSchemeMaster).omit({ id: true, createdAt: true, updatedAt: true });
 var insertCustomerEnrollmentSchema = createInsertSchema(customerEnrollments).omit({ id: true, cardNumber: true, createdAt: true, updatedAt: true });
-var insertMonthlyPaymentSchema = createInsertSchema(monthlyPayments).omit({ id: true, createdAt: true, updatedAt: true });
 
 // server/db.ts
 import dotenv from "dotenv";
@@ -471,16 +652,72 @@ var DatabaseStorage = class {
     return product;
   }
   async searchProducts(query) {
-    return await db.select().from(products).where(
-      sql`${products.name} ILIKE ${`%${query}%`} OR ${products.barcodeNumber} ILIKE ${`%${query}%`}`
-    ).orderBy(asc(products.name));
+    const pattern = `%${query}%`;
+    const rows = await db.select({
+      id: products.id,
+      name: products.name,
+      barcodeNumber: products.barcodeNumber,
+      type: products.type,
+      stoneWeight: products.stoneWeight,
+      dealerId: products.dealerId,
+      weight: products.netWeight,
+      // Updated to use netWeight
+      grossWeight: products.grossWeight,
+      makingChargeType: products.makingChargeType,
+      makingChargeValue: products.makingChargeValue,
+      wastageChargeType: products.wastageChargeType,
+      wastageChargeValue: products.wastageChargeValue,
+      centralGovtNumber: products.centralGovtNumber,
+      categoryId: products.categoryId,
+      createdAt: products.createdAt,
+      updatedAt: products.updatedAt,
+      catId: productCategories.id,
+      catName: productCategories.name,
+      catCode: productCategories.code,
+      catTax: productCategories.taxPercentage,
+      catHsn: productCategories.hsnCode
+    }).from(products).leftJoin(productCategories, eq(products.categoryId, productCategories.id)).where(sql`${products.name} ILIKE ${pattern} OR ${products.barcodeNumber} ILIKE ${pattern}`).orderBy(asc(products.name)).limit(25);
+    return rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      barcodeNumber: r.barcodeNumber,
+      type: r.type,
+      stoneWeight: r.stoneWeight,
+      dealerId: r.dealerId,
+      weight: r.weight,
+      grossWeight: r.grossWeight,
+      // Add the missing grossWeight field
+      makingChargeType: r.makingChargeType,
+      makingChargeValue: r.makingChargeValue,
+      wastageChargeType: r.wastageChargeType,
+      wastageChargeValue: r.wastageChargeValue,
+      centralGovtNumber: r.centralGovtNumber,
+      categoryId: r.categoryId,
+      createdAt: r.createdAt,
+      updatedAt: r.updatedAt,
+      category: r.catId ? {
+        id: r.catId,
+        name: r.catName,
+        code: r.catCode,
+        taxPercentage: r.catTax,
+        hsnCode: r.catHsn
+      } : null
+    }));
   }
   async createProduct(product) {
-    const [newProduct] = await db.insert(products).values(product).returning();
+    const prepared = { ...product };
+    ["stoneWeight", "weight", "makingChargeValue", "wastageChargeValue"].forEach((k) => {
+      if (prepared[k] !== void 0 && prepared[k] !== null) prepared[k] = prepared[k].toString();
+    });
+    const [newProduct] = await db.insert(products).values(prepared).returning();
     return newProduct;
   }
   async updateProduct(id, product) {
-    const [updatedProduct] = await db.update(products).set({ ...product, updatedAt: /* @__PURE__ */ new Date() }).where(eq(products.id, id)).returning();
+    const prepared = { ...product, updatedAt: /* @__PURE__ */ new Date() };
+    ["stoneWeight", "weight", "makingChargeValue", "wastageChargeValue"].forEach((k) => {
+      if (prepared[k] !== void 0 && prepared[k] !== null) prepared[k] = prepared[k].toString();
+    });
+    const [updatedProduct] = await db.update(products).set(prepared).where(eq(products.id, id)).returning();
     return updatedProduct;
   }
   async deleteProduct(id) {
@@ -530,8 +767,24 @@ var DatabaseStorage = class {
     return result;
   }
   async createPriceMaster(prices) {
-    const newPrices = await db.insert(priceMaster).values(prices).returning();
-    return newPrices;
+    const results = [];
+    for (const priceData of prices) {
+      const existingPrice = await db.select().from(priceMaster).where(and(
+        eq(priceMaster.categoryId, priceData.categoryId),
+        eq(priceMaster.effectiveDate, priceData.effectiveDate)
+      )).limit(1);
+      if (existingPrice.length > 0) {
+        const [updatedPrice] = await db.update(priceMaster).set({
+          pricePerGram: priceData.pricePerGram,
+          updatedAt: /* @__PURE__ */ new Date()
+        }).where(eq(priceMaster.id, existingPrice[0].id)).returning();
+        results.push(updatedPrice);
+      } else {
+        const [newPrice] = await db.insert(priceMaster).values(priceData).returning();
+        results.push(newPrice);
+      }
+    }
+    return results;
   }
   async updatePriceMaster(id, price) {
     const [updatedPrice] = await db.update(priceMaster).set({ ...price, updatedAt: /* @__PURE__ */ new Date() }).where(eq(priceMaster.id, id)).returning();
@@ -585,6 +838,100 @@ var DatabaseStorage = class {
     const result = await db.delete(purchaseOrders).where(eq(purchaseOrders.id, id));
     return result.length > 0;
   }
+  async getPurchaseOrderWithDetails(id) {
+    const order = await db.select({
+      id: purchaseOrders.id,
+      orderNumber: purchaseOrders.orderNumber,
+      customerId: purchaseOrders.customerId,
+      orderDate: purchaseOrders.orderDate,
+      status: purchaseOrders.status,
+      totalAmount: purchaseOrders.totalAmount,
+      totalDiscountAmount: purchaseOrders.totalDiscountAmount,
+      createdAt: purchaseOrders.createdAt,
+      updatedAt: purchaseOrders.updatedAt,
+      createdBy: purchaseOrders.createdBy,
+      updatedBy: purchaseOrders.updatedBy,
+      customerName: customers.name,
+      customerPhone: customers.phone,
+      creatorName: employees.name
+    }).from(purchaseOrders).leftJoin(customers, eq(purchaseOrders.customerId, customers.id)).leftJoin(employees, eq(purchaseOrders.createdBy, employees.id)).where(eq(purchaseOrders.id, id)).limit(1);
+    if (order.length === 0) return void 0;
+    const items = await this.getPurchaseOrderItems(id);
+    const auditLogs = await this.getPurchaseOrderAuditLogs(id);
+    return {
+      ...order[0],
+      items,
+      auditLogs
+    };
+  }
+  // Purchase Order Items operations
+  async getPurchaseOrderItems(purchaseOrderId) {
+    return await db.select({
+      id: purchaseOrderItems.id,
+      purchaseOrderId: purchaseOrderItems.purchaseOrderId,
+      productId: purchaseOrderItems.productId,
+      quantity: purchaseOrderItems.quantity,
+      purity: purchaseOrderItems.purity,
+      netWeight: purchaseOrderItems.netWeight,
+      grossWeight: purchaseOrderItems.grossWeight,
+      goldRatePerGram: purchaseOrderItems.goldRatePerGram,
+      labourRatePerGram: purchaseOrderItems.labourRatePerGram,
+      additionalCost: purchaseOrderItems.additionalCost,
+      basePrice: purchaseOrderItems.basePrice,
+      gstPercentage: purchaseOrderItems.gstPercentage,
+      gstAmount: purchaseOrderItems.gstAmount,
+      totalPrice: purchaseOrderItems.totalPrice,
+      createdAt: purchaseOrderItems.createdAt,
+      updatedAt: purchaseOrderItems.updatedAt,
+      productName: products.name,
+      productBarcode: products.barcodeNumber,
+      categoryName: productCategories.name,
+      categoryTaxPercentage: productCategories.taxPercentage
+    }).from(purchaseOrderItems).leftJoin(products, eq(purchaseOrderItems.productId, products.id)).leftJoin(productCategories, eq(products.categoryId, productCategories.id)).where(eq(purchaseOrderItems.purchaseOrderId, purchaseOrderId)).orderBy(asc(purchaseOrderItems.createdAt));
+  }
+  async createPurchaseOrderItems(items) {
+    const newItems = await db.insert(purchaseOrderItems).values(items).returning();
+    return newItems;
+  }
+  async updatePurchaseOrderItem(id, item) {
+    const [updatedItem] = await db.update(purchaseOrderItems).set({ ...item, updatedAt: /* @__PURE__ */ new Date() }).where(eq(purchaseOrderItems.id, id)).returning();
+    return updatedItem;
+  }
+  async deletePurchaseOrderItem(id) {
+    const result = await db.delete(purchaseOrderItems).where(eq(purchaseOrderItems.id, id));
+    return result.length > 0;
+  }
+  // Purchase Order Audit operations
+  async createPurchaseOrderAuditLog(auditLog) {
+    const [newAuditLog] = await db.insert(purchaseOrderAuditLog).values(auditLog).returning();
+    return newAuditLog;
+  }
+  async getPurchaseOrderAuditLogs(purchaseOrderId) {
+    return await db.select({
+      id: purchaseOrderAuditLog.id,
+      purchaseOrderId: purchaseOrderAuditLog.purchaseOrderId,
+      updatedBy: purchaseOrderAuditLog.updatedBy,
+      updatedAt: purchaseOrderAuditLog.updatedAt,
+      changes: purchaseOrderAuditLog.changes,
+      createdAt: purchaseOrderAuditLog.createdAt,
+      employeeName: employees.name,
+      employeeEmpCode: employees.empCode
+    }).from(purchaseOrderAuditLog).leftJoin(employees, eq(purchaseOrderAuditLog.updatedBy, employees.id)).where(eq(purchaseOrderAuditLog.purchaseOrderId, purchaseOrderId)).orderBy(desc(purchaseOrderAuditLog.updatedAt));
+  }
+  async getLatestPriceForCategory(categoryId, date2) {
+    const effectiveDate = date2 || (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+    let [price] = await db.select().from(priceMaster).where(and(
+      eq(priceMaster.categoryId, categoryId),
+      eq(priceMaster.effectiveDate, effectiveDate)
+    )).limit(1);
+    if (!price) {
+      [price] = await db.select().from(priceMaster).where(and(
+        eq(priceMaster.categoryId, categoryId),
+        lt(priceMaster.effectiveDate, effectiveDate)
+      )).orderBy(desc(priceMaster.effectiveDate)).limit(1);
+    }
+    return price;
+  }
   // Stock Movement operations
   async getStockMovements() {
     return await db.select().from(stockMovements).orderBy(desc(stockMovements.createdAt));
@@ -595,6 +942,51 @@ var DatabaseStorage = class {
   async createStockMovement(movement) {
     const [newMovement] = await db.insert(stockMovements).values(movement).returning();
     return newMovement;
+  }
+  // Company settings operations
+  async getCompanySettings() {
+    const [settings] = await db.select().from(companySettings).limit(1);
+    return settings;
+  }
+  async updateCompanySettings(settings) {
+    const existing = await this.getCompanySettings();
+    if (existing) {
+      const [updated] = await db.update(companySettings).set({ ...settings, updatedAt: /* @__PURE__ */ new Date() }).where(eq(companySettings.id, existing.id)).returning();
+      return updated;
+    } else {
+      const [created] = await db.insert(companySettings).values(settings).returning();
+      return created;
+    }
+  }
+  // Discount rules operations
+  async getDiscountRules() {
+    return await db.select().from(discountRules).orderBy(desc(discountRules.createdAt));
+  }
+  async getActiveDiscountRules() {
+    const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+    return await db.select().from(discountRules).where(
+      and(
+        eq(discountRules.isActive, true),
+        sql`${discountRules.startDate} <= ${today}`,
+        sql`(${discountRules.endDate} IS NULL OR ${discountRules.endDate} >= ${today})`
+      )
+    ).orderBy(desc(discountRules.createdAt));
+  }
+  async createDiscountRule(rule) {
+    const [newRule] = await db.insert(discountRules).values(rule).returning();
+    return newRule;
+  }
+  async updateDiscountRule(id, rule) {
+    const [updated] = await db.update(discountRules).set({ ...rule, updatedAt: /* @__PURE__ */ new Date() }).where(eq(discountRules.id, id)).returning();
+    return updated;
+  }
+  // Payment transaction operations
+  async getPaymentTransactions(purchaseOrderId) {
+    return await db.select().from(paymentTransactions).where(eq(paymentTransactions.purchaseOrderId, purchaseOrderId)).orderBy(desc(paymentTransactions.createdAt));
+  }
+  async createPaymentTransaction(transaction) {
+    const [newTransaction] = await db.insert(paymentTransactions).values(transaction).returning();
+    return newTransaction;
   }
   // Saving Scheme operations
   async getSavingSchemes() {
@@ -652,9 +1044,9 @@ var DatabaseStorage = class {
   async generateOrderNumber() {
     const today = /* @__PURE__ */ new Date();
     const dateStr = today.toISOString().slice(0, 10).replace(/-/g, "");
-    const todayOrders = await db.select({ orderNumber: purchaseOrders.orderNumber }).from(purchaseOrders).where(like(purchaseOrders.orderNumber, `ORD-${dateStr}-%`));
+    const todayOrders = await db.select({ orderNumber: purchaseOrders.orderNumber }).from(purchaseOrders).where(like(purchaseOrders.orderNumber, `PO-${dateStr}-%`));
     const sequence = todayOrders.length + 1;
-    return `ORD-${dateStr}-${sequence.toString().padStart(3, "0")}`;
+    return `PO-${dateStr}-${sequence.toString().padStart(3, "0")}`;
   }
   async generateCardNumber() {
     const today = /* @__PURE__ */ new Date();
@@ -668,8 +1060,9 @@ var DatabaseStorage = class {
     const [productCount] = await db.select({ count: sql`count(*)` }).from(products);
     const currentMonth = /* @__PURE__ */ new Date();
     currentMonth.setDate(1);
-    const [monthlySalesResult] = await db.select({ total: sql`coalesce(sum(cast(${purchaseOrders.totalAmount} as numeric)), 0)` }).from(purchaseOrders).where(sql`${purchaseOrders.createdAt} >= ${currentMonth}`);
-    const [stockValueResult] = await db.select({ value: sql`coalesce(sum(cast(${products.weight} as numeric) * 5000), 0)` }).from(products);
+    const monthStartIso = currentMonth.toISOString();
+    const [monthlySalesResult] = await db.select({ total: sql`coalesce(sum(cast(${purchaseOrders.totalAmount} as numeric)), 0)` }).from(purchaseOrders).where(sql`${purchaseOrders.createdAt} >= ${monthStartIso}`);
+    const [stockValueResult] = await db.select({ value: sql`coalesce(sum(cast(${products.netWeight} as numeric) * 5000), 0)` }).from(products);
     return {
       totalCustomers: customerCount.count,
       totalProducts: productCount.count,
@@ -1181,6 +1574,25 @@ async function registerRoutes(app2) {
       res.status(500).json({ message: "Failed to fetch price master" });
     }
   });
+  app2.get("/api/price-master/latest", isAuthenticated, async (req, res) => {
+    try {
+      const { categoryId, date: date2 } = req.query;
+      if (!categoryId) {
+        return res.status(400).json({ message: "categoryId is required" });
+      }
+      const price = await storage.getLatestPriceForCategory(
+        Number(categoryId),
+        date2 ? String(date2) : void 0
+      );
+      if (!price) {
+        return res.status(404).json({ message: "No price found for this category" });
+      }
+      res.json(price);
+    } catch (error) {
+      console.error("Error fetching latest price:", error);
+      res.status(500).json({ message: "Failed to fetch latest price" });
+    }
+  });
   app2.get("/api/price-master/:date", isAuthenticated, async (req, res) => {
     try {
       const date2 = req.params.date;
@@ -1219,17 +1631,125 @@ async function registerRoutes(app2) {
   app2.get("/api/purchase-orders", isAuthenticated, async (req, res) => {
     try {
       const orders = await storage.getPurchaseOrders();
-      res.json(orders);
+      const ordersWithDetails = await Promise.all(orders.map(async (order) => {
+        const customer = await storage.getCustomer(order.customerId);
+        const creator = order.createdBy ? await storage.getEmployee(order.createdBy) : null;
+        const updater = order.updatedBy ? await storage.getEmployee(order.updatedBy) : null;
+        return {
+          ...order,
+          customer: customer ? { name: customer.name, phone: customer.phone, customerId: customer.customerId } : null,
+          creator: creator ? { name: creator.name, empCode: creator.empCode } : null,
+          updater: updater ? { name: updater.name, empCode: updater.empCode } : null
+        };
+      }));
+      res.json(ordersWithDetails);
     } catch (error) {
       console.error("Error fetching purchase orders:", error);
       res.status(500).json({ message: "Failed to fetch purchase orders" });
     }
   });
+  app2.get("/api/purchase-orders/:id", isAuthenticated, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const order = await storage.getPurchaseOrderWithDetails(id);
+      if (!order) {
+        return res.status(404).json({ message: "Purchase order not found" });
+      }
+      res.json(order);
+    } catch (error) {
+      console.error("Error fetching purchase order:", error);
+      res.status(500).json({ message: "Failed to fetch purchase order" });
+    }
+  });
   app2.post("/api/purchase-orders", isAuthenticated, async (req, res) => {
     try {
-      const validatedData = insertPurchaseOrderSchema.parse(req.body);
-      const order = await storage.createPurchaseOrder(validatedData);
-      res.status(201).json(order);
+      const currentUser = req.user;
+      if (!currentUser || !["admin", "manager"].includes(currentUser.role.toLowerCase())) {
+        return res.status(403).json({ message: "Access denied. Only Admin and Manager can create purchase orders." });
+      }
+      console.log("Full request body:", JSON.stringify(req.body, null, 2));
+      const { items, discount = 0, orderDate, customerId, status = "pending", subTotal, totalGoldGrossWeight, grandTotal, gstAmount } = req.body;
+      console.log("Extracted fields:", { subTotal, totalGoldGrossWeight, grandTotal, gstAmount });
+      console.log("Types:", {
+        subTotal: typeof subTotal,
+        totalGoldGrossWeight: typeof totalGoldGrossWeight,
+        grandTotal: typeof grandTotal,
+        gstAmount: typeof gstAmount
+      });
+      if (!Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({ message: "At least one item is required" });
+      }
+      if (!customerId) {
+        return res.status(400).json({ message: "Customer is required" });
+      }
+      if (!subTotal || !totalGoldGrossWeight || !grandTotal || !gstAmount) {
+        return res.status(400).json({ message: "Missing required total fields: subTotal, totalGoldGrossWeight, grandTotal, gstAmount" });
+      }
+      let totalAmount = 0;
+      const processedItems = [];
+      for (const item of items) {
+        const { productId, quantity, weight, pricePerGram, basePrice, taxAmount, finalPrice } = item;
+        if (!productId || !quantity || !weight || !pricePerGram || basePrice === void 0 || taxAmount === void 0 || finalPrice === void 0) {
+          return res.status(400).json({ message: "All item fields are required" });
+        }
+        totalAmount += Number(finalPrice) * Number(quantity);
+        processedItems.push({
+          productId: Number(productId),
+          quantity: Number(quantity),
+          purity: "22K",
+          // Default purity - should be fetched from product
+          goldRatePerGram: String(pricePerGram),
+          netWeight: String(weight),
+          // Using weight as netWeight for now
+          grossWeight: String(weight),
+          // Using weight as grossWeight for now  
+          labourRatePerGram: "0",
+          // Default - should be calculated properly
+          additionalCost: "0",
+          basePrice: String(basePrice),
+          gstPercentage: "3.0",
+          // Default GST percentage
+          gstAmount: String(taxAmount),
+          totalPrice: String(finalPrice)
+        });
+      }
+      totalAmount = totalAmount - Number(discount);
+      const orderData = {
+        customerId: Number(customerId),
+        orderDate: orderDate || (/* @__PURE__ */ new Date()).toISOString().split("T")[0],
+        status,
+        subTotal: String(subTotal),
+        totalGoldGrossWeight: String(totalGoldGrossWeight),
+        grandTotal: String(grandTotal),
+        gstAmount: String(gstAmount),
+        totalAmount: String(grandTotal),
+        // Same as grandTotal
+        discount: String(discount),
+        createdBy: currentUser.id,
+        updatedBy: currentUser.id
+      };
+      const validatedOrderData = insertPurchaseOrderSchema.parse(orderData);
+      const order = await storage.createPurchaseOrder(validatedOrderData);
+      const itemsWithOrderId = processedItems.map((item) => ({
+        ...item,
+        purchaseOrderId: order.id
+      }));
+      const validatedItems = itemsWithOrderId.map((item) => insertPurchaseOrderItemSchema.parse(item));
+      const createdItems = await storage.createPurchaseOrderItems(validatedItems);
+      await storage.createPurchaseOrderAuditLog({
+        purchaseOrderId: order.id,
+        updatedBy: currentUser.id,
+        changes: {
+          action: "created",
+          details: `Purchase order created with ${items.length} items`,
+          totalAmount,
+          itemCount: items.length
+        }
+      });
+      res.status(201).json({
+        ...order,
+        items: createdItems
+      });
     } catch (error) {
       console.error("Error creating purchase order:", error);
       if (error instanceof z2.ZodError) {
@@ -1240,12 +1760,181 @@ async function registerRoutes(app2) {
   });
   app2.put("/api/purchase-orders/:id", isAuthenticated, async (req, res) => {
     try {
+      const currentUser = req.user;
+      if (!currentUser || !["admin", "manager"].includes(currentUser.role.toLowerCase())) {
+        return res.status(403).json({ message: "Access denied. Only Admin and Manager can update purchase orders." });
+      }
       const id = parseInt(req.params.id);
-      const validatedData = insertPurchaseOrderSchema.partial().parse(req.body);
+      const existingOrder = await storage.getPurchaseOrder(id);
+      if (!existingOrder) {
+        return res.status(404).json({ message: "Purchase order not found" });
+      }
+      const existingItems = await storage.getPurchaseOrderItems(id);
+      const { items, discount, status, ...otherUpdates } = req.body;
+      let updateData = {
+        ...otherUpdates,
+        updatedBy: currentUser.id,
+        updatedAt: /* @__PURE__ */ new Date()
+      };
+      if (discount !== void 0) updateData.totalDiscountAmount = String(discount);
+      if (status !== void 0) updateData.status = status;
+      const auditChanges = {
+        action: "updated",
+        changedFields: [],
+        itemChanges: {
+          added: [],
+          updated: [],
+          removed: []
+        },
+        previousValues: {
+          status: existingOrder.status,
+          totalAmount: existingOrder.totalAmount,
+          totalDiscountAmount: existingOrder.totalDiscountAmount
+        },
+        newValues: {}
+      };
+      Object.keys(updateData).forEach((field) => {
+        if (field !== "updatedBy" && field !== "updatedAt" && existingOrder[field] !== updateData[field]) {
+          auditChanges.changedFields.push(field);
+          auditChanges.newValues[field] = updateData[field];
+        }
+      });
+      if (Array.isArray(items)) {
+        let totalAmount = 0;
+        const existingItemsMap = new Map(
+          existingItems.map((item) => [item.id, item])
+        );
+        const processedItems = [];
+        for (const item of items) {
+          const {
+            productId,
+            quantity,
+            // Old field names
+            weight,
+            pricePerGram,
+            basePrice,
+            taxAmount,
+            finalPrice,
+            // New field names
+            netWeight,
+            grossWeight,
+            goldRatePerGram,
+            gstAmount,
+            totalPrice
+          } = item;
+          const itemNetWeight = netWeight || weight;
+          const itemGrossWeight = grossWeight || weight;
+          const itemGoldRate = goldRatePerGram || pricePerGram;
+          const itemGstAmount = gstAmount || taxAmount;
+          const itemTotalPrice = totalPrice || finalPrice;
+          if (!quantity || !itemNetWeight || !itemGoldRate || basePrice === void 0 || itemGstAmount === void 0 || itemTotalPrice === void 0) {
+            return res.status(400).json({ message: "All item fields are required" });
+          }
+          totalAmount += Number(itemTotalPrice) * Number(quantity);
+          if (item.id) {
+            const existingItem = existingItemsMap.get(item.id);
+            if (existingItem) {
+              existingItemsMap.delete(item.id);
+              const before = {};
+              const after = {};
+              let hasChanges = false;
+              const fieldMapping = [
+                { old: "quantity", new: "quantity" },
+                { old: "weight", new: "netWeight" },
+                { old: "pricePerGram", new: "goldRatePerGram" },
+                { old: "basePrice", new: "basePrice" },
+                { old: "taxAmount", new: "gstAmount" },
+                { old: "finalPrice", new: "totalPrice" }
+              ];
+              fieldMapping.forEach(({ old, new: newField }) => {
+                const itemValue = item[old] !== void 0 ? item[old] : item[newField];
+                const existingValue = existingItem[newField];
+                if (String(existingValue) !== String(itemValue)) {
+                  before[newField] = existingValue;
+                  after[newField] = itemValue;
+                  hasChanges = true;
+                }
+              });
+              if (hasChanges) {
+                const updatedItem = await storage.updatePurchaseOrderItem(item.id, {
+                  quantity: Number(quantity),
+                  netWeight: String(itemNetWeight),
+                  grossWeight: String(itemGrossWeight),
+                  goldRatePerGram: String(itemGoldRate),
+                  basePrice: String(basePrice),
+                  gstAmount: String(itemGstAmount),
+                  totalPrice: String(itemTotalPrice),
+                  purity: "22K",
+                  // Default purity
+                  labourRatePerGram: "0",
+                  // Default labour rate
+                  gstPercentage: "3.0",
+                  // Default GST percentage
+                  additionalCost: "0"
+                  // Default additional cost
+                });
+                auditChanges.itemChanges.updated.push({
+                  id: item.id,
+                  productId: existingItem.productId,
+                  before,
+                  after
+                });
+              }
+            }
+          } else if (productId) {
+            const newItemData = {
+              purchaseOrderId: id,
+              productId: Number(productId),
+              quantity: Number(quantity),
+              purity: "22K",
+              // Default purity
+              netWeight: String(itemNetWeight),
+              grossWeight: String(itemGrossWeight),
+              goldRatePerGram: String(itemGoldRate),
+              labourRatePerGram: "0",
+              // Default labour rate
+              additionalCost: "0",
+              // Default additional cost
+              basePrice: String(basePrice),
+              gstPercentage: "3.0",
+              // Default GST percentage
+              gstAmount: String(itemGstAmount),
+              totalPrice: String(itemTotalPrice)
+            };
+            const validatedItem = insertPurchaseOrderItemSchema.parse(newItemData);
+            const createdItems = await storage.createPurchaseOrderItems([validatedItem]);
+            auditChanges.itemChanges.added.push({
+              productId: Number(productId),
+              quantity: Number(quantity),
+              netWeight: String(itemNetWeight),
+              totalPrice: String(itemTotalPrice)
+            });
+          }
+        }
+        for (const [itemId, existingItem] of Array.from(existingItemsMap.entries())) {
+          await storage.deletePurchaseOrderItem(itemId);
+          auditChanges.itemChanges.removed.push({
+            id: itemId,
+            productId: existingItem.productId,
+            quantity: existingItem.quantity,
+            netWeight: existingItem.netWeight,
+            totalPrice: existingItem.totalPrice
+          });
+        }
+        totalAmount = totalAmount - Number(discount || 0);
+        updateData.totalAmount = String(totalAmount);
+        auditChanges.newValues.totalAmount = String(totalAmount);
+      }
+      const validatedData = insertPurchaseOrderSchema.partial().parse(updateData);
       const order = await storage.updatePurchaseOrder(id, validatedData);
       if (!order) {
         return res.status(404).json({ message: "Purchase order not found" });
       }
+      await storage.createPurchaseOrderAuditLog({
+        purchaseOrderId: id,
+        updatedBy: currentUser.id,
+        changes: auditChanges
+      });
       res.json(order);
     } catch (error) {
       console.error("Error updating purchase order:", error);
@@ -1253,6 +1942,77 @@ async function registerRoutes(app2) {
         return res.status(400).json({ message: "Validation error", errors: error.errors });
       }
       res.status(500).json({ message: "Failed to update purchase order" });
+    }
+  });
+  app2.get("/api/purchase-orders/:id/audit", isAuthenticated, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const auditLogs = await storage.getPurchaseOrderAuditLogs(id);
+      res.json(auditLogs);
+    } catch (error) {
+      console.error("Error fetching purchase order audit logs:", error);
+      res.status(500).json({ message: "Failed to fetch audit logs" });
+    }
+  });
+  app2.get("/api/customers/search", isAuthenticated, async (req, res) => {
+    try {
+      const raw = typeof req.query.q === "string" ? req.query.q : "";
+      const q = raw.trim();
+      if (q.length < 2) return res.json([]);
+      const customers2 = await storage.searchCustomers(q);
+      return res.json(customers2);
+    } catch (error) {
+      console.error("Error searching customers:", error);
+      res.status(500).json({ message: "Failed to search customers" });
+    }
+  });
+  app2.get("/api/products/search", isAuthenticated, async (req, res) => {
+    try {
+      const raw = typeof req.query.q === "string" ? req.query.q : "";
+      const q = raw.trim();
+      if (q.length < 2) return res.json([]);
+      const products2 = await storage.searchProducts(q);
+      return res.json(products2);
+    } catch (error) {
+      console.error("Error searching products:", error);
+      res.status(500).json({ message: "Failed to search products" });
+    }
+  });
+  app2.get("/api/customers/search/:query", isAuthenticated, async (req, res) => {
+    try {
+      const { query } = req.params;
+      if (!query || query.length < 2) {
+        return res.json([]);
+      }
+      const customers2 = await storage.searchCustomers(query);
+      res.json(customers2);
+    } catch (error) {
+      console.error("Error searching customers:", error);
+      res.status(500).json({ message: "Failed to search customers" });
+    }
+  });
+  app2.get("/api/products/search/:query", isAuthenticated, async (req, res) => {
+    try {
+      const { query } = req.params;
+      if (!query || query.length < 2) {
+        return res.json([]);
+      }
+      const products2 = await storage.searchProducts(query);
+      const productsWithCategories = await Promise.all(products2.map(async (product) => {
+        const category = product.categoryId ? await storage.getProductCategory(product.categoryId) : null;
+        return {
+          ...product,
+          category: category ? {
+            id: category.id,
+            name: category.name,
+            taxPercentage: category.taxPercentage
+          } : null
+        };
+      }));
+      res.json(productsWithCategories);
+    } catch (error) {
+      console.error("Error searching products:", error);
+      res.status(500).json({ message: "Failed to search products" });
     }
   });
   app2.get("/api/stock-movements", isAuthenticated, async (req, res) => {
@@ -1417,6 +2177,525 @@ async function registerRoutes(app2) {
   return httpServer;
 }
 
+// server/invoice-routes.ts
+import { Router } from "express";
+
+// shared/invoice-utils.ts
+function calculateItemTotal(item) {
+  const goldCost = item.goldRatePerGram * item.netWeight;
+  const labourCost = item.labourRatePerGram * item.netWeight;
+  const basePrice = (goldCost + labourCost + item.additionalCost) * item.quantity;
+  const gstAmount = basePrice * item.gstPercentage / 100;
+  const totalPrice = basePrice + gstAmount;
+  return {
+    basePrice: Math.round(basePrice * 100) / 100,
+    gstAmount: Math.round(gstAmount * 100) / 100,
+    totalPrice: Math.round(totalPrice * 100) / 100
+  };
+}
+function calculateInvoiceTotal(items, discountRules2 = {}, advanceAmount = 0) {
+  let subTotal = 0;
+  let totalMakingCharges = 0;
+  let totalGoldGrossWeight = 0;
+  let gstAmount = 0;
+  items.forEach((item) => {
+    const itemCalc = calculateItemTotal(item);
+    subTotal += itemCalc.totalPrice;
+    gstAmount += itemCalc.gstAmount;
+    totalMakingCharges += item.labourRatePerGram * item.netWeight * item.quantity;
+    totalGoldGrossWeight += item.grossWeight * item.quantity;
+  });
+  const makingChargeDiscountPercentage = discountRules2.makingChargeDiscountPercentage || 0;
+  const makingChargeDiscount = totalMakingCharges * makingChargeDiscountPercentage / 100;
+  const goldValueDiscountPerGram = discountRules2.goldValueDiscountPerGram || 0;
+  const goldValueDiscount = totalGoldGrossWeight * goldValueDiscountPerGram;
+  const totalDiscountAmount = makingChargeDiscount + goldValueDiscount;
+  const totalAmount = subTotal - totalDiscountAmount;
+  const grandTotal = totalAmount - advanceAmount;
+  return {
+    subTotal: Math.round(subTotal * 100) / 100,
+    totalMakingCharges: Math.round(totalMakingCharges * 100) / 100,
+    makingChargeDiscount: Math.round(makingChargeDiscount * 100) / 100,
+    totalGoldGrossWeight: Math.round(totalGoldGrossWeight * 1e3) / 1e3,
+    // 3 decimal places for weight
+    goldValueDiscount: Math.round(goldValueDiscount * 100) / 100,
+    totalDiscountAmount: Math.round(totalDiscountAmount * 100) / 100,
+    gstAmount: Math.round(gstAmount * 100) / 100,
+    totalAmount: Math.round(totalAmount * 100) / 100,
+    grandTotal: Math.round(grandTotal * 100) / 100
+  };
+}
+function generateInvoiceNumber() {
+  const now = /* @__PURE__ */ new Date();
+  const dateStr = now.toISOString().slice(0, 10).replace(/-/g, "");
+  const timeStr = now.toTimeString().slice(0, 8).replace(/:/g, "");
+  const randomNum = Math.floor(Math.random() * 1e3).toString().padStart(3, "0");
+  return `INV-${dateStr}-${randomNum}`;
+}
+function formatCurrency(amount) {
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2
+  }).format(amount);
+}
+function formatWeight(weight) {
+  return `${weight.toFixed(3)} gm`;
+}
+
+// shared/invoice-generator.ts
+function generateInvoiceHTML(invoice) {
+  const itemsHTML = invoice.items.map((item, index2) => {
+    const itemCalc = calculateItemTotal(item);
+    return `
+      <tr>
+        <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">${index2 + 1}</td>
+        <td style="border: 1px solid #ddd; padding: 8px;">${item.productName}</td>
+        <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">${item.purity}</td>
+        <td style="border: 1px solid #ddd; padding: 8px; text-align: right;">${formatCurrency(item.goldRatePerGram)}</td>
+        <td style="border: 1px solid #ddd; padding: 8px; text-align: right;">${formatWeight(item.netWeight)}</td>
+        <td style="border: 1px solid #ddd; padding: 8px; text-align: right;">${formatWeight(item.grossWeight)}</td>
+        <td style="border: 1px solid #ddd; padding: 8px; text-align: right;">${item.labourRatePerGram}</td>
+        <td style="border: 1px solid #ddd; padding: 8px; text-align: right;">${formatCurrency(item.additionalCost)}</td>
+        <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">${item.gstPercentage}%</td>
+        <td style="border: 1px solid #ddd; padding: 8px; text-align: right; font-weight: bold;">${formatCurrency(itemCalc.totalPrice)}</td>
+      </tr>
+    `;
+  }).join("");
+  return `
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Tax Invoice - ${invoice.invoiceNumber}</title>
+      <style>
+        body {
+          font-family: Arial, sans-serif;
+          margin: 0;
+          padding: 20px;
+          color: #333;
+        }
+        .invoice-container {
+          max-width: 210mm;
+          margin: 0 auto;
+          background: white;
+          padding: 20px;
+          box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        .header {
+          border: 2px solid #333;
+          padding: 15px;
+          margin-bottom: 20px;
+          background: linear-gradient(135deg, #f5f5f5 0%, #e8e8e8 100%);
+        }
+        .header-title {
+          background: #d4a574;
+          color: white;
+          text-align: center;
+          padding: 10px;
+          font-size: 24px;
+          font-weight: bold;
+          margin: -15px -15px 15px -15px;
+        }
+        .company-info {
+          float: left;
+          width: 60%;
+        }
+        .logo-section {
+          float: right;
+          width: 35%;
+          text-align: center;
+          background: #fffacd;
+          padding: 20px;
+          border: 1px solid #ddd;
+        }
+        .bill-details {
+          clear: both;
+          display: flex;
+          justify-content: space-between;
+          margin: 20px 0;
+        }
+        .bill-to, .bill-info {
+          width: 48%;
+        }
+        .items-table {
+          width: 100%;
+          border-collapse: collapse;
+          margin: 20px 0;
+        }
+        .items-table th {
+          background: #4a6fa5;
+          color: white;
+          padding: 10px 8px;
+          text-align: center;
+          font-size: 12px;
+          border: 1px solid #ddd;
+        }
+        .items-table td {
+          font-size: 11px;
+        }
+        .totals-section {
+          float: right;
+          width: 50%;
+          margin-top: 20px;
+        }
+        .totals-row {
+          display: flex;
+          justify-content: space-between;
+          padding: 5px 0;
+          border-bottom: 1px solid #eee;
+        }
+        .totals-row.highlight {
+          background: #fff9c4;
+          font-weight: bold;
+          padding: 8px;
+        }
+        .footer {
+          clear: both;
+          margin-top: 40px;
+          text-align: center;
+          border-top: 2px solid #333;
+          padding-top: 15px;
+        }
+        .signature-section {
+          margin: 30px 0;
+          border: 1px solid #ddd;
+          padding: 15px;
+        }
+      </style>
+    </head>
+    <body>
+      <div class="invoice-container">
+        <!-- Header -->
+        <div class="header">
+          <div class="header-title">Tax Invoice</div>
+          <div class="company-info">
+            <strong>Company Name:</strong> ${invoice.company.companyName}<br>
+            <strong>Address:</strong> ${invoice.company.address}<br><br>
+            <strong>GSTN:</strong> ${invoice.company.gstNumber}<br>
+            <strong>Website:</strong> ${invoice.company.website || "N/A"}
+          </div>
+          <div class="logo-section">
+            <div style="font-size: 36px; font-weight: bold; color: #666;">Logo</div>
+          </div>
+          <div style="clear: both;"></div>
+        </div>
+
+        <!-- Bill Details -->
+        <div class="bill-details">
+          <div class="bill-to">
+            <strong>Bill To:</strong><br>
+            <strong>Name of Client:</strong> ${invoice.customer.name}<br>
+            <strong>Email:</strong> ${invoice.customer.email || "N/A"}<br>
+            <strong>Phone:</strong> ${invoice.customer.phone}<br>
+            <strong>Address:</strong> ${invoice.customer.address || "N/A"}
+          </div>
+          <div class="bill-info">
+            <strong>Bill No.:</strong> ${invoice.invoiceNumber}<br>
+            <strong>Bill Date:</strong> ${invoice.billDate}<br>
+            <strong>Due Date:</strong> ${invoice.dueDate || "N/A"}<br>
+            <strong>Biller Name:</strong> ${invoice.billerName || "N/A"}
+          </div>
+        </div>
+
+        <!-- Items Table -->
+        <table class="items-table">
+          <thead>
+            <tr>
+              <th>Sl No.</th>
+              <th>Item Name</th>
+              <th>Purity</th>
+              <th>Gold Rate/Gm</th>
+              <th>Net weight (gm)</th>
+              <th>Gross weight (gm)</th>
+              <th>Labour Rate/gm</th>
+              <th>Additional Cost</th>
+              <th>GST</th>
+              <th>Total Price</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${itemsHTML}
+          </tbody>
+        </table>
+
+        <!-- Totals Section -->
+        <div class="totals-section">
+          <div class="totals-row highlight">
+            <span>Sub-total Including GST</span>
+            <span>${formatCurrency(invoice.totals.subTotal)}</span>
+          </div>
+          <div class="totals-row">
+            <span>Making Charges</span>
+            <span>${formatCurrency(invoice.totals.totalMakingCharges)}</span>
+          </div>
+          <div class="totals-row">
+            <span>Discount On Making Charges @ ${invoice.totals.makingChargeDiscountPercentage}%</span>
+            <span>${formatCurrency(invoice.totals.makingChargeDiscount)}</span>
+          </div>
+          <div class="totals-row">
+            <span><strong>Total Gold Gross weight (gm)</strong></span>
+            <span><strong>${formatWeight(invoice.totals.totalGoldGrossWeight)}</strong></span>
+          </div>
+          <div class="totals-row">
+            <span>Discount On Gold Value per gm @ Rs ${invoice.totals.goldValueDiscountPerGram}</span>
+            <span>${formatCurrency(invoice.totals.totalGoldValueDiscount)}</span>
+          </div>
+          <div class="totals-row">
+            <span><strong>Total Discount Amount</strong></span>
+            <span><strong>${formatCurrency(invoice.totals.totalDiscountAmount)}</strong></span>
+          </div>
+          <div class="totals-row highlight">
+            <span><strong>Total</strong></span>
+            <span><strong>${formatCurrency(invoice.totals.totalAmount)}</strong></span>
+          </div>
+          <div class="totals-row">
+            <span>Amount Paid in Advance</span>
+            <span>${formatCurrency(invoice.totals.advanceAmount)}</span>
+          </div>
+          <div class="totals-row highlight" style="font-size: 16px;">
+            <span><strong>Grand Total</strong></span>
+            <span><strong>${formatCurrency(invoice.totals.grandTotal)}</strong></span>
+          </div>
+        </div>
+
+        <div style="clear: both;"></div>
+
+        <!-- Signature Section -->
+        <div class="signature-section">
+          <strong>Business Signature</strong><br><br>
+          <div style="height: 40px;"></div>
+        </div>
+
+        <!-- Footer -->
+        <div class="footer">
+          <div style="background: #d4a574; color: white; padding: 10px; margin: 20px 0;">
+            <strong>${invoice.company.invoiceTerms || "Thanks for business with us!!! Please visit us again !!!"}</strong>
+          </div>
+          <div>
+            <strong>Contact Details</strong><br>
+            <strong>Phone Number:</strong> ${invoice.company.phone}<br>
+            <strong>Email Id:</strong> ${invoice.company.email}
+          </div>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+}
+function generateInvoiceText(invoice) {
+  const separator = "=".repeat(80);
+  const items = invoice.items.map((item, index2) => {
+    const itemCalc = calculateItemTotal(item);
+    return `${index2 + 1}. ${item.productName} (${item.purity})
+   Gold Rate: ${formatCurrency(item.goldRatePerGram)}/gm | Net: ${formatWeight(item.netWeight)} | Gross: ${formatWeight(item.grossWeight)}
+   Labour: ${item.labourRatePerGram}/gm | Additional: ${formatCurrency(item.additionalCost)} | GST: ${item.gstPercentage}%
+   Total: ${formatCurrency(itemCalc.totalPrice)}`;
+  }).join("\n\n");
+  return `
+${separator}
+                               TAX INVOICE
+${separator}
+
+${invoice.company.companyName}
+${invoice.company.address}
+GSTN: ${invoice.company.gstNumber}
+Phone: ${invoice.company.phone} | Email: ${invoice.company.email}
+
+${separator}
+
+Bill No: ${invoice.invoiceNumber}               Order No: ${invoice.orderNumber}
+Bill Date: ${invoice.billDate}                 Due Date: ${invoice.dueDate || "N/A"}
+Biller: ${invoice.billerName || "N/A"}
+
+Bill To:
+${invoice.customer.name}
+${invoice.customer.phone}
+${invoice.customer.email || ""}
+${invoice.customer.address || ""}
+
+${separator}
+                                ITEMS
+${separator}
+
+${items}
+
+${separator}
+                               SUMMARY
+${separator}
+
+Sub-total Including GST:                    ${formatCurrency(invoice.totals.subTotal)}
+Making Charges:                             ${formatCurrency(invoice.totals.totalMakingCharges)}
+Discount On Making Charges @ ${invoice.totals.makingChargeDiscountPercentage}%:        ${formatCurrency(invoice.totals.makingChargeDiscount)}
+Total Gold Gross Weight:                    ${formatWeight(invoice.totals.totalGoldGrossWeight)}
+Discount On Gold Value @ Rs ${invoice.totals.goldValueDiscountPerGram}/gm:        ${formatCurrency(invoice.totals.totalGoldValueDiscount)}
+Total Discount Amount:                      ${formatCurrency(invoice.totals.totalDiscountAmount)}
+Total:                                      ${formatCurrency(invoice.totals.totalAmount)}
+Amount Paid in Advance:                     ${formatCurrency(invoice.totals.advanceAmount)}
+GRAND TOTAL:                                ${formatCurrency(invoice.totals.grandTotal)}
+
+${separator}
+
+${invoice.company.invoiceTerms || "Thanks for business with us!!! Please visit us again !!!"}
+
+${separator}
+  `;
+}
+
+// server/invoice-routes.ts
+var router = Router();
+router.get("/api/invoices/:orderId", async (req, res) => {
+  try {
+    const orderId = parseInt(req.params.orderId);
+    const order = await storage.getPurchaseOrderWithDetails(orderId);
+    if (!order) {
+      return res.status(404).json({ message: "Purchase order not found" });
+    }
+    const customer = await storage.getCustomer(order.customerId);
+    if (!customer) {
+      return res.status(404).json({ message: "Customer not found" });
+    }
+    const company = await storage.getCompanySettings();
+    if (!company) {
+      return res.status(500).json({ message: "Company settings not configured" });
+    }
+    const invoiceItems = order.items.map((item) => ({
+      productId: item.productId,
+      productName: item.productName || "Unknown Product",
+      purity: item.purity,
+      quantity: item.quantity,
+      goldRatePerGram: parseFloat(item.goldRatePerGram),
+      netWeight: parseFloat(item.netWeight),
+      grossWeight: parseFloat(item.grossWeight),
+      labourRatePerGram: parseFloat(item.labourRatePerGram),
+      additionalCost: parseFloat(item.additionalCost || "0"),
+      gstPercentage: parseFloat(item.gstPercentage)
+    }));
+    const discountRules2 = {
+      makingChargeDiscountPercentage: parseFloat(order.makingChargeDiscountPercentage || "0"),
+      goldValueDiscountPerGram: parseFloat(order.goldValueDiscountPerGram || "0")
+    };
+    const advanceAmount = parseFloat(order.advanceAmount || "0");
+    const calculatedTotals = calculateInvoiceTotal(invoiceItems, discountRules2, advanceAmount);
+    const invoiceData = {
+      invoiceNumber: order.invoiceNumber || generateInvoiceNumber(),
+      orderNumber: order.orderNumber,
+      billDate: order.orderDate,
+      dueDate: order.dueDate || void 0,
+      billerName: order.billerName || void 0,
+      company: {
+        companyName: company.companyName,
+        address: company.address,
+        gstNumber: company.gstNumber,
+        website: company.website || void 0,
+        phone: company.phone,
+        email: company.email,
+        logo: company.logo || void 0,
+        invoiceTerms: company.invoiceTerms || void 0
+      },
+      customer: {
+        name: customer.name,
+        email: customer.email || void 0,
+        phone: customer.phone,
+        address: customer.address || void 0
+      },
+      items: invoiceItems,
+      totals: {
+        subTotal: calculatedTotals.subTotal,
+        totalMakingCharges: calculatedTotals.totalMakingCharges,
+        makingChargeDiscount: calculatedTotals.makingChargeDiscount,
+        makingChargeDiscountPercentage: discountRules2.makingChargeDiscountPercentage,
+        totalGoldGrossWeight: calculatedTotals.totalGoldGrossWeight,
+        goldValueDiscountPerGram: discountRules2.goldValueDiscountPerGram,
+        totalGoldValueDiscount: calculatedTotals.goldValueDiscount,
+        totalDiscountAmount: calculatedTotals.totalDiscountAmount,
+        totalAmount: calculatedTotals.totalAmount,
+        advanceAmount,
+        grandTotal: calculatedTotals.grandTotal
+      }
+    };
+    const format = req.query.format || "html";
+    if (format === "json") {
+      res.json(invoiceData);
+    } else if (format === "text") {
+      res.setHeader("Content-Type", "text/plain");
+      res.send(generateInvoiceText(invoiceData));
+    } else {
+      res.setHeader("Content-Type", "text/html");
+      res.send(generateInvoiceHTML(invoiceData));
+    }
+  } catch (error) {
+    console.error("Error generating invoice:", error);
+    res.status(500).json({ message: "Failed to generate invoice" });
+  }
+});
+router.get("/api/company-settings", async (req, res) => {
+  try {
+    const settings = await storage.getCompanySettings();
+    res.json(settings || {});
+  } catch (error) {
+    console.error("Error fetching company settings:", error);
+    res.status(500).json({ message: "Failed to fetch company settings" });
+  }
+});
+router.put("/api/company-settings", async (req, res) => {
+  try {
+    const updatedSettings = await storage.updateCompanySettings(req.body);
+    res.json(updatedSettings);
+  } catch (error) {
+    console.error("Error updating company settings:", error);
+    res.status(500).json({ message: "Failed to update company settings" });
+  }
+});
+router.get("/api/discount-rules", async (req, res) => {
+  try {
+    const active = req.query.active === "true";
+    const rules = active ? await storage.getActiveDiscountRules() : await storage.getDiscountRules();
+    res.json(rules);
+  } catch (error) {
+    console.error("Error fetching discount rules:", error);
+    res.status(500).json({ message: "Failed to fetch discount rules" });
+  }
+});
+router.post("/api/discount-rules", async (req, res) => {
+  try {
+    const newRule = await storage.createDiscountRule(req.body);
+    res.status(201).json(newRule);
+  } catch (error) {
+    console.error("Error creating discount rule:", error);
+    res.status(500).json({ message: "Failed to create discount rule" });
+  }
+});
+router.get("/api/purchase-orders/:orderId/payments", async (req, res) => {
+  try {
+    const orderId = parseInt(req.params.orderId);
+    const payments = await storage.getPaymentTransactions(orderId);
+    res.json(payments);
+  } catch (error) {
+    console.error("Error fetching payment transactions:", error);
+    res.status(500).json({ message: "Failed to fetch payment transactions" });
+  }
+});
+router.post("/api/purchase-orders/:orderId/payments", async (req, res) => {
+  try {
+    const orderId = parseInt(req.params.orderId);
+    const paymentData = {
+      ...req.body,
+      purchaseOrderId: orderId,
+      processedBy: req.user?.id || 1
+      // Default to admin if no user
+    };
+    const newPayment = await storage.createPaymentTransaction(paymentData);
+    res.status(201).json(newPayment);
+  } catch (error) {
+    console.error("Error creating payment transaction:", error);
+    res.status(500).json({ message: "Failed to create payment transaction" });
+  }
+});
+var invoice_routes_default = router;
+
 // server/vite.ts
 import express from "express";
 import fs from "fs";
@@ -1557,10 +2836,25 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 }
 
 // server/seed-initial-data.ts
-import { eq as eq2 } from "drizzle-orm";
+import { eq as eq2, desc as desc2 } from "drizzle-orm";
 async function seedInitialData() {
   try {
     console.log("Seeding initial data...");
+    const generateOrderNumberLocal = async () => {
+      const today = /* @__PURE__ */ new Date();
+      const dateStr = today.toISOString().slice(0, 10).replace(/-/g, "");
+      const existing = await db.select({ orderNumber: purchaseOrders.orderNumber }).from(purchaseOrders).where(eq2(purchaseOrders.orderNumber, `PO-${dateStr}-000`));
+      const sameDay = await db.select({ orderNumber: purchaseOrders.orderNumber }).from(purchaseOrders);
+      const count = sameDay.filter((o) => o.orderNumber.startsWith(`PO-${dateStr}-`)).length;
+      return `PO-${dateStr}-${(count + 1).toString().padStart(3, "0")}`;
+    };
+    const generateCardNumberLocal = async () => {
+      const today = /* @__PURE__ */ new Date();
+      const dateStr = today.toISOString().slice(0, 10).replace(/-/g, "");
+      const sameDay = await db.select({ cardNumber: customerEnrollments.cardNumber }).from(customerEnrollments);
+      const count = sameDay.filter((o) => o.cardNumber.startsWith(`SCH-${dateStr}-`)).length;
+      return `SCH-${dateStr}-${(count + 1).toString().padStart(3, "0")}`;
+    };
     const existingAdmin = await db.select().from(employees).where(eq2(employees.empCode, "EMP-001")).limit(1);
     if (existingAdmin.length === 0) {
       const hashedPassword = await hashPasswordForSeed("temp_password");
@@ -1698,21 +2992,34 @@ async function seedInitialData() {
     }
     const existingPrices = await db.select().from(priceMaster).limit(1);
     if (existingPrices.length === 0) {
-      const samplePrices = [
-        {
-          effectiveDate: "2025-08-01",
-          pricePerGram: "6850.00"
-        },
-        {
-          effectiveDate: "2025-08-05",
-          pricePerGram: "6920.00"
+      const categories = await db.select().from(productCategories);
+      if (categories.length > 0) {
+        const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+        const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1e3).toISOString().split("T")[0];
+        const idByCode = (code) => categories.find((c) => c.code === code)?.id;
+        const samplePrices = [
+          // Today
+          { code: "CAT-GOLD22K", date: today, price: "6500.00" },
+          { code: "CAT-GOLD18K", date: today, price: "6200.50" },
+          { code: "CAT-SILVER", date: today, price: "150.75" },
+          { code: "CAT-DIAMOND", date: today, price: "75000.00" },
+          // illustrative diamond rate
+          { code: "CAT-PLATINUM", date: today, price: "4200.00" },
+          // Yesterday
+          { code: "CAT-GOLD22K", date: yesterday, price: "6450.00" },
+          { code: "CAT-GOLD18K", date: yesterday, price: "6150.25" },
+          { code: "CAT-SILVER", date: yesterday, price: "148.50" },
+          { code: "CAT-DIAMOND", date: yesterday, price: "74500.00" },
+          { code: "CAT-PLATINUM", date: yesterday, price: "4150.00" }
+        ].map((p) => ({ categoryId: idByCode(p.code), effectiveDate: p.date, pricePerGram: p.price })).filter((p) => !!p.categoryId);
+        for (const price of samplePrices) {
+          await db.insert(priceMaster).values(price);
+          console.log(`Created price for category ${price.categoryId}: \u20B9${price.pricePerGram}/gram on ${price.effectiveDate}`);
         }
-      ];
-      for (const price of samplePrices) {
-        await db.insert(priceMaster).values(price);
-        console.log(`Created price: \u20B9${price.pricePerGram}/gram on ${price.effectiveDate}`);
+        console.log("Sample price master seeded for all categories");
+      } else {
+        console.log("No categories found, skipping price seeding");
       }
-      console.log("Sample price master seeded");
     }
     const dealersList = await db.select().from(dealers);
     const categoriesList = await db.select().from(productCategories);
@@ -1726,27 +3033,33 @@ async function seedInitialData() {
           name: "Gold Chain 22K",
           barcodeNumber: "GLD-CHN-001",
           type: "No stone",
+          purity: "22K",
           stoneWeight: null,
+          netWeight: "15.50",
+          grossWeight: "16.25",
           dealerId: dealersList[0].id,
-          weight: "15.50",
           makingChargeType: "Per Gram",
-          makingChargeValue: "150.00",
+          makingChargeValue: "200.00",
           wastageChargeType: "Percentage",
           wastageChargeValue: "8.00",
+          additionalCost: "0.00",
           centralGovtNumber: null,
           categoryId: goldCategory?.id || null
         },
         {
           name: "Silver Bracelet",
           barcodeNumber: "SLV-BRC-001",
-          type: "Stone",
-          stoneWeight: "2.25",
+          type: "No stone",
+          purity: "925",
+          stoneWeight: null,
+          netWeight: "25.00",
+          grossWeight: "25.50",
           dealerId: dealersList[2].id,
-          weight: "25.75",
           makingChargeType: "Fixed Amount",
           makingChargeValue: "500.00",
-          wastageChargeType: "Per Piece",
-          wastageChargeValue: "50.00",
+          wastageChargeType: "Fixed Amount",
+          wastageChargeValue: "100.00",
+          additionalCost: "0.00",
           centralGovtNumber: null,
           categoryId: silverCategory?.id || null
         },
@@ -1754,13 +3067,16 @@ async function seedInitialData() {
           name: "Diamond Ring",
           barcodeNumber: "DMD-RNG-001",
           type: "Diamond Stone",
+          purity: "18K",
           stoneWeight: "1.50",
+          netWeight: "6.75",
+          grossWeight: "8.25",
           dealerId: dealersList[1].id,
-          weight: "8.25",
           makingChargeType: "Percentage",
           makingChargeValue: "20.00",
           wastageChargeType: "Fixed Amount",
           wastageChargeValue: "1000.00",
+          additionalCost: "0.00",
           centralGovtNumber: "IGI123456789",
           categoryId: diamondCategory?.id || null
         },
@@ -1768,13 +3084,16 @@ async function seedInitialData() {
           name: "Gold Earrings 22K",
           barcodeNumber: "GLD-EAR-001",
           type: "No stone",
+          purity: "22K",
           stoneWeight: null,
+          netWeight: "11.50",
+          grossWeight: "12.75",
           dealerId: dealersList[0].id,
-          weight: "12.75",
           makingChargeType: "Per Gram",
-          makingChargeValue: "200.00",
+          makingChargeValue: "250.00",
           wastageChargeType: "Percentage",
           wastageChargeValue: "10.00",
+          additionalCost: "0.00",
           centralGovtNumber: null,
           categoryId: goldCategory?.id || null
         }
@@ -1812,6 +3131,207 @@ async function seedInitialData() {
         console.log(`Created saving scheme: ${scheme.schemeName} (${scheme.totalMonths} months)`);
       }
       console.log("Sample saving schemes seeded");
+    }
+    const existingPO = await db.select().from(purchaseOrders).limit(1);
+    if (existingPO.length === 0) {
+      console.log("Seeding sample purchase orders...");
+      const allProducts = await db.select().from(products);
+      const allCustomers = await db.select().from(customers);
+      const allCategories = await db.select().from(productCategories);
+      const allPrices = await db.select().from(priceMaster);
+      const latestPriceForCategory = (catId) => {
+        const perCat = allPrices.filter((p) => p.categoryId === catId);
+        if (perCat.length === 0) return null;
+        return perCat.sort((a, b) => new Date(b.effectiveDate).getTime() - new Date(a.effectiveDate).getTime())[0];
+      };
+      const customer = allCustomers[0];
+      if (customer) {
+        const chosenProducts = allProducts.slice(0, 2);
+        if (chosenProducts.length > 0) {
+          const orderNumber = await generateOrderNumberLocal();
+          let totalAmount = 0;
+          const preparedItems = [];
+          for (const p of chosenProducts) {
+            if (!p.categoryId) continue;
+            const priceRow = latestPriceForCategory(p.categoryId);
+            if (!priceRow) continue;
+            const cat = allCategories.find((c) => c.id === p.categoryId);
+            const taxPct = cat ? parseFloat(String(cat.taxPercentage)) : 0;
+            const netWeightNum = parseFloat(String(p.netWeight || "0")) || 0;
+            const grossWeightNum = parseFloat(String(p.grossWeight || "0")) || 0;
+            const pricePerGram = parseFloat(String(priceRow.pricePerGram));
+            const makingChargeValue = parseFloat(String(p.makingChargeValue || "0"));
+            let makingCharge = 0;
+            if (p.makingChargeType === "Per Gram") {
+              makingCharge = netWeightNum * makingChargeValue;
+            } else if (p.makingChargeType === "Percentage") {
+              const goldValue2 = netWeightNum * pricePerGram;
+              makingCharge = goldValue2 * (makingChargeValue / 100);
+            } else {
+              makingCharge = makingChargeValue;
+            }
+            const goldValue = netWeightNum * pricePerGram;
+            const basePrice = goldValue + makingCharge;
+            const gstAmount = basePrice * (taxPct / 100);
+            const finalPrice = basePrice + gstAmount;
+            totalAmount += finalPrice;
+            preparedItems.push({
+              productId: p.id,
+              quantity: 1,
+              purity: p.purity,
+              goldRatePerGram: pricePerGram.toFixed(2),
+              netWeight: netWeightNum.toFixed(3),
+              grossWeight: grossWeightNum.toFixed(3),
+              labourRatePerGram: makingChargeValue.toFixed(2),
+              additionalCost: "0.00",
+              basePrice: basePrice.toFixed(2),
+              gstPercentage: taxPct.toFixed(2),
+              gstAmount: gstAmount.toFixed(2),
+              totalPrice: finalPrice.toFixed(2)
+            });
+          }
+          if (preparedItems.length > 0) {
+            const [po] = await db.insert(purchaseOrders).values({
+              invoiceNumber: `INV-${orderNumber}`,
+              orderNumber,
+              customerId: customer.id,
+              orderDate: (/* @__PURE__ */ new Date()).toISOString().split("T")[0],
+              status: "pending",
+              subTotal: totalAmount.toFixed(2),
+              totalAmount: totalAmount.toFixed(2),
+              totalGoldGrossWeight: "0.00",
+              grandTotal: totalAmount.toFixed(2),
+              gstAmount: "0.00",
+              advanceAmount: "0.00",
+              outstandingAmount: totalAmount.toFixed(2),
+              createdBy: 1,
+              updatedBy: 1
+            }).returning();
+            const itemsToInsert = preparedItems.map((i) => ({ ...i, purchaseOrderId: po.id }));
+            await db.insert(purchaseOrderItems).values(itemsToInsert);
+            await db.insert(purchaseOrderAuditLog).values({
+              purchaseOrderId: po.id,
+              updatedBy: 1,
+              changes: { action: "created-seed", itemCount: preparedItems.length, totalAmount: totalAmount.toFixed(2) }
+            });
+            console.log(`Created sample purchase order ${orderNumber} with ${preparedItems.length} items.`);
+          }
+        }
+      }
+    }
+    const existingStock = await db.select().from(stockMovements).limit(1);
+    if (existingStock.length === 0) {
+      const productList = await db.select().from(products);
+      const priceRows = await db.select().from(priceMaster);
+      for (const p of productList) {
+        if (!p.categoryId) continue;
+        const latestPrice = priceRows.filter((r) => r.categoryId === p.categoryId).sort((a, b) => new Date(b.effectiveDate).getTime() - new Date(a.effectiveDate).getTime())[0];
+        const weightNum = parseFloat(String(p.netWeight || "0")) || 0;
+        if (!latestPrice || weightNum === 0) continue;
+        await db.insert(stockMovements).values({
+          productId: p.id,
+          type: "in",
+          weight: weightNum.toFixed(3),
+          rateAtTime: latestPrice.pricePerGram,
+          reference: "INITIAL-STOCK"
+        });
+      }
+      console.log("Stock movements seeded for existing products");
+    }
+    const existingEnrollment = await db.select().from(customerEnrollments).limit(1);
+    if (existingEnrollment.length === 0) {
+      const firstCustomer = await db.select().from(customers).limit(1);
+      const firstScheme = await db.select().from(savingSchemeMaster).limit(1);
+      if (firstCustomer.length && firstScheme.length) {
+        const cardNumber = await generateCardNumberLocal();
+        const monthlyAmount = "5000.00";
+        const startDate = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+        const [enrollment] = await db.insert(customerEnrollments).values({
+          customerId: firstCustomer[0].id,
+          schemeId: firstScheme[0].id,
+          monthlyAmount,
+          startDate,
+          cardNumber,
+          status: "Active"
+        }).returning();
+        console.log(`Created sample scheme enrollment ${cardNumber}`);
+        const goldCat = await db.select().from(productCategories).where(eq2(productCategories.code, "CAT-GOLD22K")).limit(1);
+        let goldRate = "6500.00";
+        if (goldCat.length) {
+          const rateRow = await db.select().from(priceMaster).where(eq2(priceMaster.categoryId, goldCat[0].id)).orderBy(desc2(priceMaster.effectiveDate)).limit(1);
+          if (rateRow.length) goldRate = String(rateRow[0].pricePerGram);
+        }
+        const goldRateNum = parseFloat(goldRate);
+        for (let m = 1; m <= 2; m++) {
+          const goldGrams = (5e3 / goldRateNum).toFixed(3);
+          await db.insert(monthlyPayments).values({
+            enrollmentId: enrollment.id,
+            paymentDate: startDate,
+            amount: monthlyAmount,
+            goldRate: goldRateNum.toFixed(2),
+            goldGrams,
+            monthNumber: m
+          });
+        }
+        console.log("Created 2 sample monthly payments for enrollment");
+      }
+    }
+    const existingCompanySettings = await db.select().from(companySettings).limit(1);
+    if (existingCompanySettings.length === 0) {
+      await db.insert(companySettings).values({
+        companyName: "Golden Jewellers",
+        address: "123 Jewelry Street, Gold Market\nMumbai, Maharashtra 400001\nIndia",
+        gstNumber: "27AABCU9603R1ZM",
+        website: "www.goldenjewellers.com",
+        phone: "+91 98765 43210",
+        email: "info@goldenjewellers.com",
+        logo: null,
+        invoiceTerms: "1. All purchases are subject to our standard terms and conditions.\n2. GST is applicable as per government rates.\n3. Returns accepted within 7 days with original receipt.",
+        bankDetails: JSON.stringify({
+          bankName: "State Bank of India",
+          accountNumber: "1234567890",
+          ifscCode: "SBIN0001234",
+          accountHolderName: "Golden Jewellers"
+        })
+      });
+      console.log("\u2705 Company settings seeded");
+    }
+    const existingDiscountRules = await db.select().from(discountRules).limit(1);
+    if (existingDiscountRules.length === 0) {
+      const discountRulesSeed = [
+        {
+          name: "VIP Customer Making Charge Discount",
+          type: "making_charge",
+          calculationType: "percentage",
+          value: "5.00",
+          minOrderAmount: "50000.00",
+          startDate: (/* @__PURE__ */ new Date()).toISOString().split("T")[0],
+          isActive: true
+        },
+        {
+          name: "Bulk Order Gold Value Discount",
+          type: "gold_value",
+          calculationType: "percentage",
+          value: "3.00",
+          minOrderAmount: "100000.00",
+          startDate: (/* @__PURE__ */ new Date()).toISOString().split("T")[0],
+          isActive: true
+        },
+        {
+          name: "Festival Special Total Discount",
+          type: "order_total",
+          calculationType: "fixed_amount",
+          value: "2000.00",
+          minOrderAmount: "75000.00",
+          maxDiscountAmount: "5000.00",
+          startDate: (/* @__PURE__ */ new Date()).toISOString().split("T")[0],
+          isActive: false
+        }
+      ];
+      for (const rule of discountRulesSeed) {
+        await db.insert(discountRules).values(rule);
+      }
+      console.log("\u2705 Discount rules seeded");
     }
     console.log("Initial data seeding completed");
   } catch (error) {
@@ -1857,6 +3377,7 @@ app.use((req, res, next) => {
   await createAdminUser();
   await seedInitialData();
   const server = await registerRoutes(app);
+  app.use(invoice_routes_default);
   app.use((err, _req, res, _next) => {
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";

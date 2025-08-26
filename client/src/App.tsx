@@ -17,6 +17,7 @@ import SavingSchemes from "@/pages/saving-schemes";
 import Reports from "@/pages/reports";
 import PriceMaster from "@/pages/price-master";
 import ProductCategories from "@/pages/product-categories";
+import AddProduct from "@/pages/add-product";
 
 function Router() {
   const { isAuthenticated, isLoading, error } = useAuth();
@@ -45,6 +46,7 @@ function Router() {
       <Route path="/employees" component={Employees} />
       <Route path="/dealers" component={Dealers} />
       <Route path="/products" component={Products} />
+      <Route path="/products/add" component={AddProduct} />
       <Route path="/product-categories" component={ProductCategories} />
       <Route path="/purchase-orders" component={PurchaseOrders} />
       <Route path="/inventory" component={Inventory} />

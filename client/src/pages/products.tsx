@@ -4,8 +4,7 @@ import { useToast } from "@/hooks/use-toast";
 import { isUnauthorizedError } from "@/lib/authUtils";
 import { useAuth } from "@/hooks/useAuth";
 import { apiRequest } from "@/lib/queryClient";
-import Sidebar from "@/components/layout/sidebar";
-import Topbar from "@/components/layout/topbar";
+import Layout from "@/components/layout/layout";
 import DataTable from "@/components/ui/data-table";
 import ProductModal from "@/components/modals/product-modal";
 import { Button } from "@/components/ui/button";
@@ -222,23 +221,17 @@ export default function Products() {
   }
 
   return (
-    <div className="flex h-screen bg-gray-50">
-      <Sidebar />
-      
-      <div className="flex flex-col flex-1 overflow-hidden">
-        <Topbar />
-        
-        <main className="flex-1 overflow-y-auto p-6">
-          <div className="max-w-7xl mx-auto">
-            {/* Page Header */}
-            <div className="flex items-center justify-between mb-6">
-              <div>
-                <h1 className="text-3xl font-bold text-gray-900">Products</h1>
-                <p className="text-gray-600 mt-1">Manage your jewelry inventory</p>
-              </div>
-              <Button
-                onClick={() => {
-                  setEditingProduct(null);
+    <Layout>
+      <div className="max-w-7xl mx-auto">
+        {/* Page Header */}
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900">Products</h1>
+            <p className="text-gray-600 mt-1">Manage your jewelry inventory</p>
+          </div>
+          <Button
+            onClick={() => {
+              setEditingProduct(null);
                   setShowModal(true);
                 }}
                 className="flex items-center space-x-2 bg-primary-500 hover:bg-primary-600"
@@ -278,38 +271,36 @@ export default function Products() {
               </CardContent>
             </Card>
           </div>
-        </main>
-      </div>
 
-      {/* Product Modal */}
-      <ProductModal
-        open={showModal}
-        onOpenChange={setShowModal}
-        product={editingProduct}
-        mode={editingProduct ? "edit" : "create"}
-      />
+          {/* Product Modal */}
+          <ProductModal
+            open={showModal}
+            onOpenChange={setShowModal}
+            product={editingProduct}
+            mode={editingProduct ? "edit" : "create"}
+          />
 
-      {/* Delete Confirmation Dialog */}
-      <AlertDialog open={!!deletingProduct} onOpenChange={() => setDeletingProduct(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete Product</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to delete "{deletingProduct?.name}"? This action cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={confirmDelete}
-              className="bg-red-600 hover:bg-red-700"
-              disabled={deleteMutation.isPending}
-            >
-              {deleteMutation.isPending ? "Deleting..." : "Delete"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </div>
+          {/* Delete Confirmation Dialog */}
+          <AlertDialog open={!!deletingProduct} onOpenChange={() => setDeletingProduct(null)}>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Delete Product</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Are you sure you want to delete "{deletingProduct?.name}"? This action cannot be undone.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={confirmDelete}
+                  className="bg-red-600 hover:bg-red-700"
+                  disabled={deleteMutation.isPending}
+                >
+                  {deleteMutation.isPending ? "Deleting..." : "Delete"}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+    </Layout>
   );
 }

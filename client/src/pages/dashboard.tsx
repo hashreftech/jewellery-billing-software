@@ -3,8 +3,7 @@ import { useState, useEffect } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { isUnauthorizedError } from "@/lib/authUtils";
 import { useAuth } from "@/hooks/useAuth";
-import Sidebar from "@/components/layout/sidebar";
-import Topbar from "@/components/layout/topbar";
+import Layout from "@/components/layout/layout";
 import StatsCard from "@/components/stats-card";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -132,23 +131,17 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="flex h-screen bg-gray-50">
-      <Sidebar />
-      
-      <div className="flex flex-col flex-1 overflow-hidden">
-        <Topbar />
-        
-        <main className="flex-1 overflow-y-auto p-6">
-          {/* Page Header */}
-          <div className="flex items-center justify-between mb-6">
-            <div>
-              <h1 className="text-3xl font-bold text-gray-900">Dashboard</h1>
-              <p className="text-gray-600 mt-1">Overview of your jewelry shop operations</p>
-            </div>
-            <div className="flex space-x-3">
-              <Button variant="outline" className="flex items-center space-x-2">
-                <Download className="w-4 h-4" />
-                <span>Export Report</span>
+    <Layout>
+      {/* Page Header */}
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-3xl font-bold text-gray-900">Dashboard</h1>
+          <p className="text-gray-600 mt-1">Overview of your jewelry shop operations</p>
+        </div>
+        <div className="flex space-x-3">
+          <Button variant="outline" className="flex items-center space-x-2">
+            <Download className="w-4 h-4" />
+            <span>Export Report</span>
               </Button>
               <Button className="flex items-center space-x-2 bg-primary-500 hover:bg-primary-600">
                 <Plus className="w-4 h-4" />
@@ -368,18 +361,16 @@ export default function Dashboard() {
               </CardContent>
             </Card>
           </div>
-        </main>
-      </div>
 
-      {/* Modals */}
-      <CustomerModal 
-        open={showCustomerModal} 
-        onOpenChange={setShowCustomerModal}
-      />
-      <ProductModal 
-        open={showProductModal} 
-        onOpenChange={setShowProductModal}
-      />
-    </div>
+          {/* Modals */}
+          <CustomerModal 
+            open={showCustomerModal} 
+            onOpenChange={setShowCustomerModal}
+          />
+          <ProductModal 
+            open={showProductModal} 
+            onOpenChange={setShowProductModal}
+          />
+    </Layout>
   );
 }

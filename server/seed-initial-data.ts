@@ -6,14 +6,43 @@ import {
   customers, 
   products, 
   savingSchemeMaster, 
-  priceMaster 
+  priceMaster,
+  purchaseOrders,
+  purchaseOrderItems,
+  purchaseOrderAuditLog,
+  stockMovements,
+  customerEnrollments,
+  monthlyPayments,
+  companySettings,
+  discountRules,
+  paymentTransactions
 } from "@shared/schema";
-import { eq } from "drizzle-orm";
+import { eq, desc } from "drizzle-orm";
+import { computeFinalPrice, productToPriceInputs, calculateOrderSummary } from "@shared/pricing-utils";
 import { hashPasswordForSeed } from "./auth";
 
 export async function seedInitialData() {
   try {
     console.log("Seeding initial data...");
+
+    // Local helpers (must be here, not inside deeper blocks to avoid strict mode issues)
+  const generateOrderNumberLocal = async () => {
+      const today = new Date();
+      const dateStr = today.toISOString().slice(0, 10).replace(/-/g, '');
+      const existing = await db.select({ orderNumber: purchaseOrders.orderNumber }).from(purchaseOrders).where(eq(purchaseOrders.orderNumber, `PO-${dateStr}-000`));
+      // Count matching prefix (simple approach)
+      const sameDay = await db.select({ orderNumber: purchaseOrders.orderNumber }).from(purchaseOrders);
+      const count = sameDay.filter(o => o.orderNumber.startsWith(`PO-${dateStr}-`)).length;
+      return `PO-${dateStr}-${(count + 1).toString().padStart(3,'0')}`;
+  };
+
+  const generateCardNumberLocal = async () => {
+      const today = new Date();
+      const dateStr = today.toISOString().slice(0, 10).replace(/-/g, '');
+      const sameDay = await db.select({ cardNumber: customerEnrollments.cardNumber }).from(customerEnrollments);
+      const count = sameDay.filter(o => o.cardNumber.startsWith(`SCH-${dateStr}-`)).length;
+      return `SCH-${dateStr}-${(count + 1).toString().padStart(3,'0')}`;
+  };
 
     // Create admin employee if not exists
     const existingAdmin = await db
@@ -176,29 +205,36 @@ export async function seedInitialData() {
     // Seed price master if not exists  
     const existingPrices = await db.select().from(priceMaster).limit(1);
     if (existingPrices.length === 0) {
-      // Get categories first
       const categories = await db.select().from(productCategories);
-      
       if (categories.length > 0) {
         const today = new Date().toISOString().split('T')[0];
         const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-        
+
+        // Helper to find category id by code
+        const idByCode = (code: string) => categories.find(c => c.code === code)?.id;
+
         const samplePrices = [
-          // Today's prices
-          { categoryId: categories[0].id, effectiveDate: today, pricePerGram: "6500.00" },
-          { categoryId: categories[1]?.id || categories[0].id, effectiveDate: today, pricePerGram: "6200.50" },
-          { categoryId: categories[2]?.id || categories[0].id, effectiveDate: today, pricePerGram: "150.75" },
-          // Yesterday's prices
-          { categoryId: categories[0].id, effectiveDate: yesterday, pricePerGram: "6450.00" },
-          { categoryId: categories[1]?.id || categories[0].id, effectiveDate: yesterday, pricePerGram: "6150.25" },
-          { categoryId: categories[2]?.id || categories[0].id, effectiveDate: yesterday, pricePerGram: "148.50" },
-        ];
+          // Today
+          { code: "CAT-GOLD22K", date: today, price: "6500.00" },
+          { code: "CAT-GOLD18K", date: today, price: "6200.50" },
+          { code: "CAT-SILVER",  date: today, price: "150.75" },
+          { code: "CAT-DIAMOND", date: today, price: "75000.00" }, // illustrative diamond rate
+          { code: "CAT-PLATINUM", date: today, price: "4200.00" },
+          // Yesterday
+          { code: "CAT-GOLD22K", date: yesterday, price: "6450.00" },
+          { code: "CAT-GOLD18K", date: yesterday, price: "6150.25" },
+            { code: "CAT-SILVER",  date: yesterday, price: "148.50" },
+          { code: "CAT-DIAMOND", date: yesterday, price: "74500.00" },
+          { code: "CAT-PLATINUM", date: yesterday, price: "4150.00" },
+        ]
+          .map(p => ({ categoryId: idByCode(p.code)!, effectiveDate: p.date, pricePerGram: p.price }))
+          .filter(p => !!p.categoryId);
 
         for (const price of samplePrices) {
           await db.insert(priceMaster).values(price);
           console.log(`Created price for category ${price.categoryId}: ₹${price.pricePerGram}/gram on ${price.effectiveDate}`);
         }
-        console.log("Sample price master seeded");
+        console.log("Sample price master seeded for all categories");
       } else {
         console.log("No categories found, skipping price seeding");
       }
@@ -220,27 +256,33 @@ export async function seedInitialData() {
           name: "Gold Chain 22K",
           barcodeNumber: "GLD-CHN-001",
           type: "No stone",
+          purity: "22K",
           stoneWeight: null,
+          netWeight: "15.50",
+          grossWeight: "16.25",
           dealerId: dealersList[0].id,
-          weight: "15.50",
           makingChargeType: "Per Gram",
-          makingChargeValue: "150.00",
+          makingChargeValue: "200.00",
           wastageChargeType: "Percentage", 
           wastageChargeValue: "8.00",
+          additionalCost: "0.00",
           centralGovtNumber: null,
           categoryId: goldCategory?.id || null
         },
         {
           name: "Silver Bracelet",
-          barcodeNumber: "SLV-BRC-001", 
-          type: "Stone",
-          stoneWeight: "2.25",
+          barcodeNumber: "SLV-BRC-001",
+          type: "No stone",
+          purity: "925",
+          stoneWeight: null,
+          netWeight: "25.00",
+          grossWeight: "25.50",
           dealerId: dealersList[2].id,
-          weight: "25.75",
           makingChargeType: "Fixed Amount",
           makingChargeValue: "500.00",
-          wastageChargeType: "Per Piece",
-          wastageChargeValue: "50.00",
+          wastageChargeType: "Fixed Amount",
+          wastageChargeValue: "100.00",
+          additionalCost: "0.00",
           centralGovtNumber: null,
           categoryId: silverCategory?.id || null
         },
@@ -248,13 +290,16 @@ export async function seedInitialData() {
           name: "Diamond Ring",
           barcodeNumber: "DMD-RNG-001",
           type: "Diamond Stone", 
+          purity: "18K",
           stoneWeight: "1.50",
+          netWeight: "6.75",
+          grossWeight: "8.25",
           dealerId: dealersList[1].id,
-          weight: "8.25",
           makingChargeType: "Percentage",
           makingChargeValue: "20.00",
           wastageChargeType: "Fixed Amount",
           wastageChargeValue: "1000.00",
+          additionalCost: "0.00",
           centralGovtNumber: "IGI123456789",
           categoryId: diamondCategory?.id || null
         },
@@ -262,19 +307,20 @@ export async function seedInitialData() {
           name: "Gold Earrings 22K",
           barcodeNumber: "GLD-EAR-001",
           type: "No stone",
+          purity: "22K",
           stoneWeight: null,
+          netWeight: "11.50",
+          grossWeight: "12.75",
           dealerId: dealersList[0].id,
-          weight: "12.75",
           makingChargeType: "Per Gram", 
-          makingChargeValue: "200.00",
+          makingChargeValue: "250.00",
           wastageChargeType: "Percentage",
           wastageChargeValue: "10.00",
+          additionalCost: "0.00",
           centralGovtNumber: null,
           categoryId: goldCategory?.id || null
         }
-      ];
-
-      for (const product of sampleProducts) {
+      ];      for (const product of sampleProducts) {
         await db.insert(products).values(product);
         console.log(`Created product: ${product.name} (${product.barcodeNumber})`);
       }
@@ -310,6 +356,229 @@ export async function seedInitialData() {
         console.log(`Created saving scheme: ${scheme.schemeName} (${scheme.totalMonths} months)`);
       }
       console.log("Sample saving schemes seeded");
+    }
+
+  // ------------------------------------------------------------------
+  // Extended Demo Data (Purchase Orders, Items, Stock, Enrollments)
+  // ------------------------------------------------------------------
+
+    // Seed sample purchase orders (only if none exist)
+    const existingPO = await db.select().from(purchaseOrders).limit(1);
+    if (existingPO.length === 0) {
+      console.log("Seeding sample purchase orders...");
+      const allProducts = await db.select().from(products);
+      const allCustomers = await db.select().from(customers);
+      const allCategories = await db.select().from(productCategories);
+      const allPrices = await db.select().from(priceMaster);
+
+  const latestPriceForCategory = (catId: number) => {
+        // Filter and pick max effective date
+        const perCat = allPrices.filter(p => p.categoryId === catId);
+        if (perCat.length === 0) return null;
+        return perCat.sort((a,b)=> new Date(b.effectiveDate as any).getTime() - new Date(a.effectiveDate as any).getTime())[0];
+  };
+
+      const customer = allCustomers[0];
+      if (customer) {
+        const chosenProducts = allProducts.slice(0, 2); // first two products for demo
+        if (chosenProducts.length > 0) {
+          const orderNumber = await generateOrderNumberLocal();
+          let totalAmount = 0;
+
+          // Prepare items
+            const preparedItems: any[] = [];
+          for (const p of chosenProducts) {
+            if (!p.categoryId) continue;
+            const priceRow = latestPriceForCategory(p.categoryId);
+            if (!priceRow) continue;
+            const cat = allCategories.find(c => c.id === p.categoryId);
+            const taxPct = cat ? parseFloat(String(cat.taxPercentage)) : 0;
+            const netWeightNum = parseFloat(String(p.netWeight || '0')) || 0;
+            const grossWeightNum = parseFloat(String(p.grossWeight || '0')) || 0;
+            const pricePerGram = parseFloat(String(priceRow.pricePerGram));
+            
+            // Use the comprehensive pricing utility
+            const stoneWeight = parseFloat(String(p.stoneWeight || '0')) || 0;
+            const stoneValue = stoneWeight * 1000; // Assume ₹1000 per gram for stone value
+            
+            const inputs = productToPriceInputs(p, pricePerGram, taxPct, 1, stoneValue);
+            const breakdown = computeFinalPrice(inputs);
+            
+            totalAmount += breakdown.final_price;
+            preparedItems.push({
+              productId: p.id,
+              quantity: 1,
+              purity: p.purity,
+              goldRatePerGram: pricePerGram.toFixed(2),
+              netWeight: netWeightNum.toFixed(3),
+              grossWeight: grossWeightNum.toFixed(3),
+              labourRatePerGram: (breakdown.making_charge / Math.max(netWeightNum, 1)).toFixed(2), // Calculate equivalent labour rate for compatibility
+              additionalCost: breakdown.additional_cost.toFixed(2),
+              basePrice: breakdown.subtotal.toFixed(2),
+              gstPercentage: taxPct.toFixed(2),
+              gstAmount: breakdown.gst_amount.toFixed(2),
+              totalPrice: breakdown.final_price.toFixed(2)
+            });
+          }
+
+          if (preparedItems.length > 0) {
+            const [po] = await db.insert(purchaseOrders).values({
+              invoiceNumber: `INV-${orderNumber}`,
+              orderNumber,
+              customerId: customer.id,
+              orderDate: new Date().toISOString().split('T')[0],
+              status: 'pending',
+              subTotal: totalAmount.toFixed(2),
+              totalAmount: totalAmount.toFixed(2),
+              totalGoldGrossWeight: '0.00',
+              grandTotal: totalAmount.toFixed(2),
+              gstAmount: '0.00',
+              advanceAmount: '0.00',
+              outstandingAmount: totalAmount.toFixed(2),
+              createdBy: 1,
+              updatedBy: 1,
+            }).returning();
+
+            // Attach order id to items and insert
+            const itemsToInsert = preparedItems.map(i => ({ ...i, purchaseOrderId: po.id }));
+            await db.insert(purchaseOrderItems).values(itemsToInsert);
+
+            // Simple audit log
+            await db.insert(purchaseOrderAuditLog).values({
+              purchaseOrderId: po.id,
+              updatedBy: 1,
+              changes: { action: 'created-seed', itemCount: preparedItems.length, totalAmount: totalAmount.toFixed(2) }
+            });
+            console.log(`Created sample purchase order ${orderNumber} with ${preparedItems.length} items.`);
+          }
+        }
+      }
+    }
+
+    // Seed stock movements (if none)
+    const existingStock = await db.select().from(stockMovements).limit(1);
+    if (existingStock.length === 0) {
+      const productList = await db.select().from(products);
+      const priceRows = await db.select().from(priceMaster);
+      for (const p of productList) {
+        if (!p.categoryId) continue;
+        const latestPrice = priceRows.filter(r => r.categoryId === p.categoryId)
+          .sort((a,b)=> new Date(b.effectiveDate as any).getTime() - new Date(a.effectiveDate as any).getTime())[0];
+        const weightNum = parseFloat(String(p.netWeight || '0')) || 0;
+        if (!latestPrice || weightNum === 0) continue;
+        await db.insert(stockMovements).values({
+          productId: p.id,
+          type: 'in',
+          weight: weightNum.toFixed(3),
+          rateAtTime: latestPrice.pricePerGram,
+          reference: 'INITIAL-STOCK'
+        });
+      }
+      console.log('Stock movements seeded for existing products');
+    }
+
+    // Seed a sample scheme enrollment + payments (if none)
+    const existingEnrollment = await db.select().from(customerEnrollments).limit(1);
+    if (existingEnrollment.length === 0) {
+      const firstCustomer = await db.select().from(customers).limit(1);
+      const firstScheme = await db.select().from(savingSchemeMaster).limit(1);
+      if (firstCustomer.length && firstScheme.length) {
+        const cardNumber = await generateCardNumberLocal();
+        const monthlyAmount = '5000.00';
+        const startDate = new Date().toISOString().split('T')[0];
+        const [enrollment] = await db.insert(customerEnrollments).values({
+          customerId: firstCustomer[0].id,
+          schemeId: firstScheme[0].id,
+          monthlyAmount,
+          startDate,
+          cardNumber,
+          status: 'Active'
+        }).returning();
+        console.log(`Created sample scheme enrollment ${cardNumber}`);
+
+        // Create two monthly payments
+        const goldCat = await db.select().from(productCategories).where(eq(productCategories.code, 'CAT-GOLD22K')).limit(1);
+        let goldRate = '6500.00';
+        if (goldCat.length) {
+          const rateRow = await db.select().from(priceMaster).where(eq(priceMaster.categoryId, goldCat[0].id)).orderBy(desc(priceMaster.effectiveDate)).limit(1);
+          if (rateRow.length) goldRate = String(rateRow[0].pricePerGram);
+        }
+        const goldRateNum = parseFloat(goldRate);
+        for (let m = 1; m <= 2; m++) {
+          const goldGrams = (5000 / goldRateNum).toFixed(3);
+          await db.insert(monthlyPayments).values({
+            enrollmentId: enrollment.id,
+            paymentDate: startDate,
+            amount: monthlyAmount,
+            goldRate: goldRateNum.toFixed(2),
+            goldGrams,
+            monthNumber: m
+          });
+        }
+        console.log('Created 2 sample monthly payments for enrollment');
+      }
+    }
+
+    // Seed company settings (if none exist)
+    const existingCompanySettings = await db.select().from(companySettings).limit(1);
+    if (existingCompanySettings.length === 0) {
+      await db.insert(companySettings).values({
+        companyName: "Golden Jewellers",
+        address: "123 Jewelry Street, Gold Market\nMumbai, Maharashtra 400001\nIndia",
+        gstNumber: "27AABCU9603R1ZM",
+        website: "www.goldenjewellers.com",
+        phone: "+91 98765 43210",
+        email: "info@goldenjewellers.com",
+        logo: null,
+        invoiceTerms: "1. All purchases are subject to our standard terms and conditions.\n2. GST is applicable as per government rates.\n3. Returns accepted within 7 days with original receipt.",
+        bankDetails: JSON.stringify({
+          bankName: "State Bank of India",
+          accountNumber: "1234567890",
+          ifscCode: "SBIN0001234",
+          accountHolderName: "Golden Jewellers"
+        })
+      });
+      console.log("✅ Company settings seeded");
+    }
+
+    // Seed discount rules (if none exist)
+    const existingDiscountRules = await db.select().from(discountRules).limit(1);
+    if (existingDiscountRules.length === 0) {
+      const discountRulesSeed = [
+        {
+          name: "VIP Customer Making Charge Discount",
+          type: "making_charge",
+          calculationType: "percentage",
+          value: "5.00",
+          minOrderAmount: "50000.00",
+          startDate: new Date().toISOString().split('T')[0],
+          isActive: true
+        },
+        {
+          name: "Bulk Order Gold Value Discount",
+          type: "gold_value", 
+          calculationType: "percentage",
+          value: "3.00",
+          minOrderAmount: "100000.00",
+          startDate: new Date().toISOString().split('T')[0],
+          isActive: true
+        },
+        {
+          name: "Festival Special Total Discount",
+          type: "order_total",
+          calculationType: "fixed_amount",
+          value: "2000.00",
+          minOrderAmount: "75000.00",
+          maxDiscountAmount: "5000.00",
+          startDate: new Date().toISOString().split('T')[0],
+          isActive: false
+        }
+      ];
+
+      for (const rule of discountRulesSeed) {
+        await db.insert(discountRules).values(rule);
+      }
+      console.log("✅ Discount rules seeded");
     }
 
     console.log("Initial data seeding completed");
